@@ -909,24 +909,22 @@ class VideoProcessor:
                         # 根据配音时长筛选合适的视频
                         suitable_videos = [v for v in videos if v["path"] not in used_videos and v["duration"] >= audio_duration]
                         
-                        # 如果没有足够长的视频，尝试使用最长的
+                        # 如果没有足够长的视频，尝试使用未使用过的视频
                         if not suitable_videos and videos:
-                            suitable_videos = sorted(videos, key=lambda v: v["duration"], reverse=True)
-                            if suitable_videos[0]["path"] in used_videos:
-                                # 如果最长的已经使用过，尝试找其他未使用的
-                                unused_videos = [v for v in videos if v["path"] not in used_videos]
-                                if unused_videos:
-                                    suitable_videos = sorted(unused_videos, key=lambda v: v["duration"], reverse=True)
-                                else:
-                                    logger.warning(f"场景 '{folder_name}' 的所有视频都已使用，将重复使用")
-                                    suitable_videos = sorted(videos, key=lambda v: v["duration"], reverse=True)
-                            logger.warning(f"没有找到时长大于 {audio_duration:.2f}秒 的视频，将使用最长的视频: {suitable_videos[0]['duration']:.2f}秒")
+                            # 修改：不再按时长排序，改为随机选择，优先考虑未使用的视频
+                            unused_videos = [v for v in videos if v["path"] not in used_videos]
+                            if unused_videos:
+                                suitable_videos = unused_videos
+                                logger.warning(f"没有找到时长大于 {audio_duration:.2f}秒 的未使用视频，将随机使用未使用的视频")
+                            else:
+                                logger.warning(f"场景 '{folder_name}' 的所有视频都已使用，将随机重复使用")
+                                suitable_videos = videos  # 使用所有视频，后续会随机选择
                         
                         if not suitable_videos:
                             logger.warning(f"场景 '{folder_name}' 没有合适的视频，跳过")
                             continue
                         
-                        # 随机选择一个符合条件的视频，而不是总是选第一个
+                        # 随机选择一个符合条件的视频
                         import random
                         video_info = random.choice(suitable_videos)
                         video_file = video_info["path"]
