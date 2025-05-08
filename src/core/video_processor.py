@@ -809,8 +809,10 @@ class VideoProcessor:
                             logger.warning(f"场景 '{folder_name}' 没有未使用的视频，将使用已使用过的视频")
                             unused_videos = videos
                         
-                        # 按时长排序视频
-                        sorted_videos = sorted(unused_videos, key=lambda v: v["duration"], reverse=True)
+                        # 修改：不再按时长排序，而是随机打乱视频顺序
+                        import random
+                        random.shuffle(unused_videos)  # 随机打乱视频顺序
+                        sorted_videos = unused_videos  # 变量名保持不变，但内容已经是随机顺序
                         
                         # 准备拼接的片段
                         concat_clips = []
