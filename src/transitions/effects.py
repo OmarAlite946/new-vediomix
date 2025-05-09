@@ -8,7 +8,7 @@
 
 import random
 import numpy as np
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union, Any, Optional
 
 try:
     import cv2
@@ -17,7 +17,7 @@ try:
 except ImportError as e:
     raise ImportError(f"请安装必要的依赖: {e}")
 
-from utils.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger()
 

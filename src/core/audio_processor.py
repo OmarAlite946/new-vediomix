@@ -21,8 +21,8 @@ try:
 except ImportError as e:
     raise ImportError(f"请安装必要的依赖: {e}")
 
-from utils.logger import get_logger
-from utils.cache_config import CacheConfig
+from src.utils.logger import get_logger
+from src.utils.cache_config import CacheConfig
 
 logger = get_logger()
 

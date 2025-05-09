@@ -1,15 +1,14 @@
-# 视频混剪工具系统设计蓝图
+# 短视频批量混剪工具系统设计蓝图
 
 ## 1. 文档信息
-**项目名称**：视频混剪工具  
+**项目名称**：短视频批量混剪工具  
 **编写日期**：2023-06-15  
-**负责人**：  
 **版本号**：1.0.0  
 
 ## 2. 项目概览
 
 ### 项目定位
-视频混剪工具是一款桌面应用程序，旨在提供简单高效的视频混剪功能。用户可以通过导入素材文件夹，自动随机选择视频片段，添加转场效果和背景音乐，快速生成完整的视频作品。该工具特别适合需要批量生成视频内容的用户，支持GPU硬件加速以提高处理效率。
+短视频批量混剪工具是一款桌面应用程序，旨在提供简单高效的视频混剪功能。用户可以通过导入素材文件夹，自动随机选择视频片段，添加转场效果和背景音乐，快速生成完整的视频作品。该工具特别适合需要批量生成视频内容的用户，支持GPU硬件加速以提高处理效率。
 
 ### 目标用户
 - 内容创作者：需要快速剪辑和混合视频素材的创作者
@@ -17,31 +16,43 @@
 - 普通用户：无专业视频编辑经验但需要简单视频处理功能的用户
 
 ### 核心功能概览
-1. 素材文件夹导入（支持拖拽）
-2. 视频片段自动抽取与拼接
-3. 多种转场效果支持
+1. 素材文件夹批量导入（支持拖拽和快捷方式）
+2. 视频片段自动抽取与拼接（支持单视频模式和多视频拼接模式）
+3. 多种转场效果支持（淡入淡出、镜像翻转、色相偏移等）
 4. 音频配音与背景音乐添加
 5. 硬件加速编码（支持NVIDIA、Intel、AMD）
 6. 批量视频生成
 7. 处理进度与时间统计
+8. 水印添加功能（支持时间戳和自定义文字）
 
 ### 用户使用流程
 1. 启动应用程序
-2. 导入素材文件夹（可通过拖拽或菜单选择）
-3. 设置输出参数（转场效果、编码设置等）
-4. 添加背景音乐（可选）
+2. 导入素材文件夹（可通过拖拽、批量导入或文件对话框选择）
+   - 支持识别和处理Windows快捷方式(.lnk)
+   - 自动检测"视频"和"配音"子文件夹
+3. 设置输出参数
+   - 选择分辨率（支持竖屏/横屏多种尺寸）
+   - 设置比特率或选择"与原画一致"
+   - 选择转场效果
+   - 配置GPU加速选项
+   - 设置水印参数（可选）
+   - 调整音频设置（配音音量、背景音乐音量）
+4. 选择抽取模式
+   - 单视频模式：从每个场景选择一个足够长的视频
+   - 多视频拼接模式：允许多个短视频拼接以满足配音长度
 5. 点击"开始合成"按钮
-6. 等待处理完成，查看生成的视频文件
+6. 查看实时进度和处理时间
+7. 合成完成后查看生成的视频文件
 
 ## 3. 系统架构设计
 
 ### 系统架构
 
 #### 系统分层
-- 用户界面层(UI)：提供用户交互界面
-- 核心处理层(Core)：负责视频和音频处理的核心逻辑
-- 工具层(Utils)：提供文件操作、日志等通用功能
-- 硬件管理层(Hardware)：负责硬件检测与配置
+- **用户界面层(UI)**：提供用户交互界面，基于PyQt5实现
+- **核心处理层(Core)**：负责视频和音频处理的核心逻辑
+- **工具层(Utils)**：提供文件操作、日志、缓存等通用功能
+- **硬件管理层(Hardware)**：负责硬件检测与GPU配置
 
 #### 模块划分与模块关系
 ```
@@ -50,7 +61,8 @@ src/
 │   ├── video_processor.py  # 视频处理核心
 │   └── audio_processor.py  # 音频处理核心
 ├── ui/                  # 界面模块
-│   └── main_window.py     # 主窗口实现
+│   ├── main_window.py     # 主窗口实现
+│   └── batch_window.py    # 批处理窗口实现
 ├── transitions/         # 转场特效模块
 │   ├── __init__.py       # 模块初始化
 │   └── effects.py        # 各种转场效果实现
@@ -61,47 +73,46 @@ src/
 └── utils/              # 工具模块
     ├── __init__.py      # 模块初始化
     ├── file_utils.py    # 文件处理工具
-    └── logger.py        # 日志系统
+    ├── logger.py        # 日志系统
+    ├── cache_config.py  # 缓存配置
+    ├── user_settings.py # 用户设置管理
+    └── help_system.py   # 帮助系统
 ```
 
 #### 模块依赖关系
-```mermaid
-graph TD
-    A[main_window.py] --> B[video_processor.py]
-    B --> C[audio_processor.py]
-    B --> D[transitions/effects.py]
-    A --> E[file_utils.py]
-    B --> E
-    A --> F[system_analyzer.py]
-    A --> G[logger.py]
-    C --> E
-    D --> B
-    B --> H[gpu_config.py]
-    F --> H
-```
+- **main_window.py**：依赖video_processor.py、系统分析器、日志、文件工具、用户设置等
+- **video_processor.py**：依赖audio_processor.py、转场效果、GPU配置
+- **gpu_config.py**：依赖system_analyzer.py进行硬件检测
+- **file_utils.py**：被其他多数模块使用，提供基础文件操作
+- **user_settings.py**：管理用户偏好设置，被UI模块使用
+- **cache_config.py**：管理临时文件缓存，被处理模块使用
+- **batch_window.py**：复用main_window的功能，提供批处理能力
 
 #### 整体技术栈说明
 - **语言**：Python 3.8+
-  - 选择理由：跨平台支持、丰富的视频处理库、开发效率高
+  - **选择理由**：跨平台支持、丰富的视频处理库、开发效率高、适合桌面应用开发
 - **UI框架**：PyQt5
-  - 选择理由：成熟的跨平台UI框架，支持丰富的控件和自定义样式
+  - **选择理由**：成熟的跨平台UI框架，支持丰富的控件和自定义样式，信号槽机制便于事件处理
 - **视频处理**：
-  - FFmpeg (命令行调用)：强大的视频编解码引擎，支持硬件加速
-  - MoviePy：Python视频处理库，提供简洁的视频剪辑和效果API
-  - 选择理由：结合FFmpeg的性能和MoviePy的易用性，实现高效视频处理
-- **音频处理**：
-  - pydub：Python音频处理库，提供简洁的音频处理接口
-  - 选择理由：简化音频操作，适合基础的音频混合和处理
+  - **FFmpeg** (命令行调用)：用于高效视频编解码，支持硬件加速
+  - **MoviePy**：Python视频处理库，提供简洁的视频剪辑和特效API
+  - **选择理由**：结合FFmpeg的性能和MoviePy的易用性，两阶段处理平衡开发效率和运行效率
+- **文件操作**：
+  - **pathlib**：现代化的路径处理
+  - **shutil**：文件复制移动等高级操作
+  - **win32com**：处理Windows快捷方式
+  - **选择理由**：使用标准库保证跨平台兼容性，同时使用win32com处理Windows特有功能
 - **硬件加速**：
-  - NVIDIA GPU加速：使用NVENC编码器
-  - Intel GPU加速：使用QSV编码器
-  - AMD GPU加速：使用AMF编码器
-  - 选择理由：提高视频处理性能，降低CPU负担
+  - **NVIDIA GPU加速**：使用NVENC编码器
+  - **Intel GPU加速**：使用QSV编码器
+  - **AMD GPU加速**：使用AMF编码器
+  - **选择理由**：支持市面主流GPU，最大化利用硬件资源提高处理速度
 - **辅助库**：
-  - logging：日志记录
-  - os/pathlib：文件路径处理
-  - threading：多线程支持
-  - subprocess：进程调用
+  - **logging**：标准日志记录
+  - **threading**：多线程处理
+  - **subprocess**：进程调用与管理
+  - **json**：配置文件存储
+  - **选择理由**：使用Python标准库提高兼容性和减少依赖
 
 ## 4. 各模块设计
 
@@ -114,92 +125,182 @@ graph TD
 #### 模块详情
 
 ##### 模块概览
-文件处理模块负责处理所有与文件系统相关的操作，包括媒体文件识别、文件操作、临时文件管理等。该模块设计为工具类集合，为其他模块提供文件操作支持。
+文件处理模块负责处理所有与文件系统相关的操作，包括媒体文件识别、文件操作、临时文件管理和快捷方式解析等。该模块设计为工具类集合，为其他模块提供文件操作支持。
 
 ##### 功能点列表
-1. 媒体文件识别与分类
+1. 媒体文件识别与分类（视频和音频）
 2. 文件复制与移动操作
 3. 临时文件与目录管理
 4. 目录结构维护
-5. 文件大小获取
-6. 文件锁定检测
-7. 磁盘空间检查
+5. 文件大小获取和格式化显示
+6. Windows快捷方式（.lnk文件）解析
+7. 文件命名规范化
 
 ##### 接口定义
 
 | 接口名称 | 输入参数 | 返回值 | 描述 |
 |---------|---------|--------|------|
-| list_media_files | directory: Path, recursive: bool = False | Dict[str, List[Path]] | 列出目录中的媒体文件，分类为视频和音频 |
-| list_files | directory: Path, extensions: List[str], recursive: bool = False | List[Path] | 列出指定扩展名的文件 |
-| copy_files | source_paths: List[Path], dest_dir: Path | List[Path] | 复制文件到目标目录 |
-| move_files | source_paths: List[Path], dest_dir: Path | List[Path] | 移动文件到目标目录 |
-| create_temp_file | prefix: str, suffix: str | Path | 创建临时文件 |
-| create_temp_dir | prefix: str | Path | 创建临时目录 |
-| ensure_dir_exists | directory: Path | bool | 确保目录存在，不存在则创建 |
-| clean_temp_dir | directory: Path, older_than: int = 3600 | int | 清理临时目录中的旧文件 |
-| get_file_size | file_path: Path | int | 获取文件大小(字节) |
+| resolve_shortcut | shortcut_path: Union[str, Path] | Optional[str] | 解析Windows快捷方式，返回目标路径 |
+| list_media_files | directory: Union[str, Path], recursive: bool = False | Dict[str, List[Path]] | 列出目录中的媒体文件，分类为视频和音频 |
+| list_files | directory: Union[str, Path], extensions: List[str] = None, recursive: bool = False, name_pattern: str = None | List[Path] | 列出目录中符合条件的文件 |
+| ensure_dir_exists | directory: Union[str, Path] | Path | 确保目录存在，不存在则创建 |
+| copy_files | src_files: List[Union[str, Path]], dest_dir: Union[str, Path], rename_func: Callable = None, overwrite: bool = False | List[Path] | 复制文件到目标目录 |
+| move_files | src_files: List[Union[str, Path]], dest_dir: Union[str, Path], rename_func: Callable = None, overwrite: bool = False | List[Path] | 移动文件到目标目录 |
+| delete_files | files: List[Union[str, Path]], ignore_errors: bool = False | int | 删除文件，返回成功删除的数量 |
+| create_temp_dir | prefix: str = "videomixtool_", parent_dir: Union[str, Path] = None | Path | 创建临时目录 |
+| create_temp_file | prefix: str = "videomixtool_", suffix: str = "", dir: Union[str, Path] = None | Path | 创建临时文件 |
+| clean_temp_dir | directory: Union[str, Path], file_pattern: str = None, older_than: int = None, recursive: bool = False | int | 清理临时目录 |
+| get_valid_filename | name: str | str | 将字符串转换为有效的文件名 |
+| human_readable_size | size_bytes: int | str | 将字节大小转换为人类可读格式 |
+| process_files_parallel | files: List[Union[str, Path]], process_func: Callable, max_workers: int = None | List | 并行处理文件 |
 
 ##### 核心处理流程
-1. **媒体文件识别**：
-   - 根据文件扩展名快速筛选视频和音频文件
-   - 按照扩展名列表进行分类
+
+1. **媒体文件识别与分类**：
+   - 定义视频和音频文件的扩展名集合
+   - 通过扩展名快速筛选视频和音频文件
    - 支持递归搜索子目录
    - 返回分类后的媒体文件字典
 
-2. **文件系统操作**：
-   - 文件复制：确保目标目录存在，使用shutil复制文件
-   - 文件移动：检查目标目录，使用shutil移动文件
-   - 临时文件创建：在应用专用临时目录中创建临时文件
-   - 目录检查：检查目录是否存在，不存在则创建
+2. **Windows快捷方式解析**：
+   - 使用win32com.client解析.lnk文件
+   - 获取目标路径
+   - 处理相对路径转换为绝对路径
+   - 验证目标是否存在
+
+3. **文件列表获取**：
+   - 支持文件扩展名过滤
+   - 支持文件名模式匹配（正则表达式）
+   - 可选递归搜索
+   - 返回Path对象列表
+
+4. **临时文件管理**：
+   - 创建应用专用临时目录
+   - 生成唯一标识的临时文件
+   - 提供清理功能，支持按时间和模式清理
 
 ##### 技术实现要点
-- 使用Path对象处理路径，提高跨平台兼容性
-- 通过文件扩展名进行初步媒体类型识别
-- 采用简化的验证策略，减少不必要的验证步骤
-- 使用tempfile库创建临时文件和目录
-- 使用shutil进行文件复制和移动操作
+- 使用pathlib.Path对象处理路径，提高跨平台兼容性
+- 使用正则表达式进行文件名匹配
+- 使用win32com处理Windows快捷方式
+- 使用concurrent.futures实现并行文件处理
+- 通过shutil进行文件操作（复制、移动）
+- 使用tempfile创建临时文件和目录
 
 ##### 技术选型说明
-- **pathlib.Path**：使用Path对象而非字符串处理路径，提高跨平台兼容性，避免不同系统路径分隔符问题
-- **Python标准库**：使用os, shutil, tempfile等标准库进行文件操作，确保跨平台兼容性
-- **扩展名验证**：对媒体文件使用简单扩展名检查，而非复杂的内容验证，提高扫描效率
-- **独立临时目录**：为应用创建专用临时目录，避免与其他应用冲突，便于管理
+- **pathlib.Path**：使用Path对象替代字符串处理路径，提高代码可读性，避免平台差异导致的路径分隔符问题
+- **win32com**：使用COM接口是解析Windows快捷方式最可靠的方法，相比于其他解决方案更稳定
+- **concurrent.futures**：标准库提供的线程池实现，简化并行处理代码
+- **标准库**：尽可能使用Python标准库，减少外部依赖，提高兼容性
 
 ##### 技术实现细节
+
+**Windows快捷方式解析实现**：
 ```python
-def list_media_files(directory: Path) -> Dict[str, List[Path]]:
+def resolve_shortcut(shortcut_path: Union[str, Path]) -> Optional[str]:
+    """
+    解析Windows快捷方式(.lnk文件)，返回其目标路径
+    
+    Args:
+        shortcut_path: 快捷方式文件路径
+        
+    Returns:
+        Optional[str]: 快捷方式目标路径，如果解析失败则返回None
+    """
+    if not os.path.exists(shortcut_path) or not str(shortcut_path).lower().endswith('.lnk'):
+        logger.debug(f"不是有效的快捷方式文件: {shortcut_path}")
+        return None
+        
+    try:
+        import win32com.client
+        import pythoncom
+        
+        # 初始化COM
+        pythoncom.CoInitialize()
+        
+        try:
+            # 确保使用绝对路径
+            abs_shortcut_path = os.path.abspath(str(shortcut_path))
+            
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shortcut = shell.CreateShortCut(abs_shortcut_path)
+            target_path = shortcut.Targetpath
+            
+            # 检查目标路径是否存在
+            if not target_path:
+                logger.warning(f"快捷方式目标路径为空: {abs_shortcut_path}")
+                return None
+                
+            # 如果目标路径是相对路径，尝试转换为绝对路径
+            if not os.path.isabs(target_path):
+                shortcut_dir = os.path.dirname(abs_shortcut_path)
+                possible_target = os.path.join(shortcut_dir, target_path)
+                
+                if os.path.exists(possible_target) and os.path.isdir(possible_target):
+                    target_path = possible_target
+            
+            # 检查目标路径是否存在并且是目录
+            if os.path.exists(target_path) and os.path.isdir(target_path):
+                return target_path
+            else:
+                # 尝试使用其他方法解析
+                try:
+                    import subprocess
+                    cmd = ['cmd', '/c', 'dir', '/A:L', abs_shortcut_path]
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    
+                    if result.returncode == 0:
+                        for line in result.stdout.splitlines():
+                            if '->' in line:
+                                target = line.split('->')[-1].strip()
+                                if os.path.exists(target) and os.path.isdir(target):
+                                    return target
+                except Exception:
+                    pass
+                
+                return None
+        finally:
+            # 无论如何都释放COM
+            pythoncom.CoUninitialize()
+    except Exception as e:
+        logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
+        return None
+```
+
+**列出媒体文件实现**：
+```python
+def list_media_files(directory: Union[str, Path], recursive: bool = False) -> Dict[str, List[Path]]:
     """
     列出指定目录下的媒体文件，分类为视频和音频
-    - 使用扩展名进行快速初步识别
-    - 支持递归子目录搜索
-    - 返回分类后的媒体文件字典
-    """
-    # 视频和音频扩展名列表
-    video_extensions = ['.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm']
-    audio_extensions = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a']
     
-    # 获取所有符合扩展名的文件
-    videos = list_files(directory, extensions=video_extensions, recursive=recursive)
-    audios = list_files(directory, extensions=audio_extensions, recursive=recursive)
+    Args:
+        directory: 目录路径
+        recursive: 是否递归搜索子目录
+        
+    Returns:
+        Dict[str, List[Path]]: {'videos': [...], 'audios': [...]}
+    """
+    videos = list_files(directory, extensions=list(video_extensions), recursive=recursive)
+    audios = list_files(directory, extensions=list(audio_extensions), recursive=recursive)
     
     return {
-        'videos': videos, 
+        'videos': videos,
         'audios': audios
     }
 ```
 
 ##### 异常处理与边界情况
-1. **文件不存在**：检测文件存在性，不存在时返回空结果或引发自定义异常
-2. **权限不足**：捕获权限错误异常，提供友好错误信息
-3. **文件被锁定**：在文件操作前检测文件锁定状态，避免操作失败
-4. **磁盘空间不足**：在写入大文件前检查可用磁盘空间，预防写入失败
-5. **中文路径问题**：在Windows系统中特别处理中文路径，避免编码问题
+1. **文件不存在**：检测文件和目录的存在性，不存在时返回空列表或None，避免抛出异常
+2. **权限不足**：捕获权限错误异常，记录日志并提供友好错误消息
+3. **快捷方式解析失败**：提供多种解析方法，一种失败后尝试其他方法
+4. **文件路径编码问题**：特别处理Windows中文路径可能导致的编码问题
+5. **并行处理异常**：捕获并记录每个文件的处理异常，不影响其他文件的处理
 
 ##### 注意事项
-- 媒体文件识别使用简化策略，仅依赖扩展名判断，不进行内容验证
-- 文件操作需考虑用户权限问题，提供友好错误信息
-- 在Windows系统中，中文路径可能导致问题，需特别处理
-- 临时文件需定期清理，避免磁盘空间占用过大
+- 媒体文件识别仅依赖扩展名，不检查文件内容，可能有误判
+- Windows快捷方式解析需要win32com模块，在非Windows系统上此功能无效
+- 处理大量文件时，并行处理可以提高效率，但也会增加内存占用
+- 临时文件应在使用后及时清理，避免磁盘空间占用
 
 ### 4.2 视频处理模块 (core/video_processor.py)
 
@@ -210,433 +311,834 @@ def list_media_files(directory: Path) -> Dict[str, List[Path]]:
 #### 模块详情
 
 ##### 模块概览
-视频处理模块是系统的核心组件，负责视频片段选择、裁剪、拼接、转场效果应用以及视频导出。该模块支持两种编码模式（重编码和快速不重编码），以及多种硬件加速选项，实现高效视频处理。
+视频处理模块是系统的核心组件，负责视频片段选择、裁剪、拼接、转场效果应用、音频处理以及视频导出。该模块支持两种视频抽取模式（单视频和多视频拼接）、两种编码模式（重编码和快速不重编码），以及多种硬件加速选项，实现高效视频处理。
 
 ##### 功能点列表
-1. 素材文件夹扫描与解析
+1. 素材文件夹扫描与解析（支持快捷方式）
 2. 视频片段随机选择与裁剪
-3. 视频片段拼接与转场处理
-4. 硬件加速视频编码
-5. 背景音乐添加
-6. 批量视频生成
-7. 处理进度反馈与计时
+3. 单视频模式和多视频拼接模式
+4. 视频片段拼接与转场处理
+5. 硬件加速视频编码
+6. 背景音乐添加
+7. 水印添加（时间戳和自定义文字）
+8. 批量视频生成
+9. 处理进度反馈与计时
+10. 支持用户中断处理
 
 ##### 接口定义
 
 | 接口名称 | 输入参数 | 返回值 | 描述 |
 |---------|---------|--------|------|
-| process_batch | material_folders: List[Dict[str, Any]], output_dir: str, count: int = 1, bgm_path: str = None | Tuple[List[str], str] | 批量处理视频，返回输出视频路径列表和总用时 |
-| _process_single_video | material_data: Dict[str, Dict[str, Any]], output_path: str, bgm_path: str = None | str | 处理单个视频合成 |
-| _scan_material_folders | material_folders: List[Dict[str, Any]] | Dict[str, Dict[str, Any]] | 扫描素材文件夹，获取视频和配音文件 |
+| __init__ | settings: Dict[str, Any] = None, progress_callback: Callable[[str, float], None] = None | None | 初始化视频处理器 |
+| process_batch | material_folders: List[Dict[str, Any]], output_dir: str, count: int = 1, bgm_path: str = None | Tuple[List[str], str] | 批量处理视频，返回输出视频路径和总用时 |
+| stop_processing | None | None | 中止当前处理任务 |
+| _scan_material_folders | material_folders: List[Dict[str, Any]] | Dict[str, Dict[str, Any]] | 扫描素材文件夹，获取视频和配音文件信息 |
+| _process_single_video | material_data: Dict, output_path: str, bgm_path: str = None, progress_start: float = 0, progress_end: float = 100 | str | 处理单个视频合成 |
+| _merge_clips_with_transitions | clip_infos: List[Dict[str, Any]] | VideoFileClip | 合并视频片段并添加转场效果 |
 | report_progress | message: str, percent: float | None | 报告处理进度 |
 | _encode_with_ffmpeg | input_path: str, output_path: str, hardware_type: str = "auto", codec: str = "libx264" | bool | 使用FFmpeg进行视频编码 |
+| _add_watermark_to_video | input_path: str, output_path: str | bool | 添加水印到视频 |
 | _get_ffmpeg_cmd | None | str | 获取FFmpeg命令路径 |
-| _should_use_direct_ffmpeg | codec: str | bool | 判断是否使用直接FFmpeg命令编码 |
-| _format_time | seconds: float | str | 将秒数格式化为时:分:秒格式 |
-| _log_gpu_info | stage: str = "" | None | 记录GPU状态信息 |
 
 ##### 核心处理流程
 
 1. **素材文件夹扫描**：
-   - 支持两种导入模式：
-     - 直接导入独立场景文件夹
-     - 导入父文件夹，自动提取子文件夹作为场景
-   - 按名称排序文件夹确保段落顺序
-   - 分别识别视频和配音文件
+   - 遍历输入的素材文件夹列表
+   - 检测每个文件夹的视频和配音子文件夹，包括处理快捷方式
+   - 统计每个文件夹的视频和音频文件数量
+   - 生成结构化的材料数据供后续处理
 
-2. **视频生成流程**：
-   - 批量处理循环：
-     1. 记录开始时间
-     2. 为每个视频创建输出路径
-     3. 处理单个视频
-     4. 更新进度
-     5. 计算总用时并返回结果
+2. **批量视频生成流程**：
+   - 扫描所有素材文件夹，构建材料数据结构
+   - 记录开始时间
+   - 循环生成指定数量的视频
+   - 对每个视频执行单视频处理流程
+   - 报告进度和时间统计
+   - 返回生成的视频路径列表和总用时
 
-   - 单个视频处理：
-     1. 从每个段落文件夹随机选择一个视频
-     2. 获取对应的配音文件
-     3. 从视频开头裁剪与音频时长匹配的片段
-     4. 应用指定的转场效果
-     5. 合并所有视频片段
-     6. 添加背景音乐（如有）
-     7. 导出最终视频
+3. **单视频处理流程**：
+   - 为每个场景随机选择视频和配音
+   - 根据抽取模式（单视频/多视频拼接）处理视频片段
+   - 添加转场效果
+   - 合并所有视频片段
+   - 添加背景音乐（如有）
+   - 添加水印（如启用）
+   - 导出最终视频
 
-3. **视频编码流程**：
-   - 获取FFmpeg命令路径
-   - 根据GPU类型选择合适的编码器
-   - 设置编码参数
-   - 执行FFmpeg命令
-   - 监控编码进度
+4. **视频编码流程**：
+   - 检测FFmpeg可用性
+   - 根据硬件加速类型选择编码器和参数
+   - 执行FFmpeg命令进行编码
+   - 实时监控编码进度
+   - 处理编码过程中的异常
 
 ##### 技术实现要点
-- 使用MoviePy库处理视频剪辑、合成和特效
+- 使用MoviePy库进行视频剪辑、特效和合成
 - 通过subprocess调用FFmpeg实现高效视频编码
 - 支持NVIDIA、Intel、AMD三种GPU硬件加速
-- 实现两种编码模式：重编码模式和快速不重编码模式
-- 使用多线程实现编码进度监控
-- 实现计时功能记录处理用时
+- 实现两种编码模式：重编码和快速不重编码
+- 使用多线程实现编码进度监控和处理计时
+- 实现视频水印添加功能（时间戳和自定义文字）
+- 支持处理中断和恢复
 
 ##### 技术选型说明
-- **MoviePy**：提供简洁的Python接口，适合视频基础处理，但编码效率不高
-- **FFmpeg**：强大的视频编码工具，支持多种硬件加速，适合最终编码阶段
-- **两阶段处理流程**：利用MoviePy的易用性和FFmpeg的高效编码能力，平衡开发效率和运行效率
-- **多种GPU支持**：兼容市面主流GPU，最大化利用硬件资源
-- **可配置编码参数**：为不同硬件提供针对性参数，优化性能
+- **MoviePy**: 提供简洁的Python接口，适合视频基础处理和特效，但编码效率不高
+- **FFmpeg**: 强大的视频编码工具，支持多种硬件加速，适合高效编码
+- **两阶段处理流程**: 先使用MoviePy处理视频内容和特效，再用FFmpeg高效编码，平衡易用性和性能
+- **硬件加速**: 针对不同GPU提供专用参数设置，最大化利用硬件性能
+- **多线程处理**: 使用线程池和多线程技术，提高并行处理能力
 
 ##### 技术实现细节
 
-**视频抽取和裁剪逻辑**：
+**视频抽取模式逻辑**：
 ```python
-# 视频抽取逻辑优化
-suitable_videos = [v for v in videos if v["path"] not in used_videos and v["duration"] >= audio_duration]
-video_info = random.choice(suitable_videos)
+# 根据抽取模式处理视频
+extract_mode = folder_info.get("extract_mode", "single_video")
 
-# 视频裁剪逻辑修改，从开头裁剪
-if video_duration > clip_duration:
-    start_time = 0  # 从视频开头开始截取
-    video_clip = video_clip.subclip(start_time, start_time + clip_duration)
-```
-
-**编码模式选择逻辑**：
-```python
-def _should_use_direct_ffmpeg(self, codec):
-    """
-    判断是否应该使用直接FFmpeg命令进行编码
+if extract_mode == "single_video":
+    # 单视频模式: 从文件夹中选择一个时长大于等于配音时长的视频
+    suitable_videos = [v for v in folder_videos if v["duration"] >= audio_duration]
     
-    关于重编码模式和快速不重编码模式：
+    if suitable_videos:
+        # 从合适的视频中随机选择一个
+        selected_video = random.choice(suitable_videos)
+    else:
+        # 如果没有足够长的视频，选择时长最长的一个
+        selected_video = max(folder_videos, key=lambda v: v["duration"]) if folder_videos else None
     
-    1. 重编码模式（返回False）：
-       - 使用MoviePy处理视频后再使用FFmpeg编码
-       - 优势：更高的兼容性和稳定性，支持更丰富的视频处理效果
-       - 劣势：处理速度较慢，需要两次编码，可能导致额外的质量损失
-    
-    2. 快速不重编码模式（返回True）：
-       - 直接使用FFmpeg硬件加速编码，跳过MoviePy的编码流程
-       - 优势：处理速度更快(2-5倍)，减少质量损失，更高效利用GPU资源
-       - 劣势：可能与某些特效不兼容，在旧GPU或驱动上可能不稳定
-    """
-```
-
-**FFmpeg路径管理**：
-```python
-def _get_ffmpeg_cmd(self):
-    """
-    获取FFmpeg命令路径
-    
-    Returns:
-        str: FFmpeg可执行文件路径
-    """
-    ffmpeg_cmd = "ffmpeg"  # 默认命令
-    
-    # 尝试从配置文件读取自定义路径
-    try:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        ffmpeg_path_file = project_root / "ffmpeg_path.txt"
+    if selected_video:
+        # 裁剪视频，从开头开始截取与配音相同的时长
+        video_clip = VideoFileClip(selected_video["path"])
+        video_clip = video_clip.subclip(0, min(audio_duration, video_clip.duration))
+        selected_videos = [{"clip": video_clip, "source_path": selected_video["path"]}]
+    else:
+        logger.warning(f"场景 {folder_key} 中没有可用的视频")
+        continue
         
-        if ffmpeg_path_file.exists():
-            with open(ffmpeg_path_file, 'r', encoding="utf-8") as f:
-                custom_path = f.read().strip()
-                if custom_path and os.path.exists(custom_path):
-                    # 在Windows处理中文路径
-                    if os.name == 'nt':
-                        import win32api
-                        custom_path = win32api.GetShortPathName(custom_path)
-                    ffmpeg_cmd = custom_path
-    except Exception as e:
-        logger.error(f"读取自定义FFmpeg路径时出错: {str(e)}")
+else:  # 多视频拼接模式
+    # 从文件夹中随机选择多个视频拼接，直到总时长大于等于配音时长
+    random.shuffle(folder_videos)
+    selected_videos = []
+    current_duration = 0
     
-    return ffmpeg_cmd
+    for video_info in folder_videos:
+        if current_duration >= audio_duration:
+            break
+            
+        video_path = video_info["path"]
+        video_clip = VideoFileClip(video_path)
+        
+        # 如果已经达到所需时长的80%以上，且添加这个视频会大幅超出，则跳过
+        if current_duration >= audio_duration * 0.8 and current_duration + video_clip.duration > audio_duration * 1.5:
+            continue
+        
+        # 添加完整视频片段
+        selected_videos.append({"clip": video_clip, "source_path": video_path})
+        current_duration += video_clip.duration
+    
+    # 如果总时长仍不足，重复使用已选择的视频
+    if current_duration < audio_duration and selected_videos:
+        additional_videos = []
+        i = 0
+        
+        while current_duration < audio_duration:
+            video_data = selected_videos[i % len(selected_videos)]
+            video_clip = video_data["clip"].copy()
+            additional_videos.append({"clip": video_clip, "source_path": video_data["source_path"]})
+            current_duration += video_clip.duration
+            i += 1
+        
+        selected_videos.extend(additional_videos)
+    
+    # 没有视频可用时跳过
+    if not selected_videos:
+        logger.warning(f"场景 {folder_key} 中没有可用的视频")
+        continue
 ```
 
-**处理计时功能**：
+**FFmpeg硬件加速编码实现**：
 ```python
-# 在初始化中添加计时变量
-self.start_time = 0
-
-# 添加时间格式化函数
-def _format_time(self, seconds):
-    """将秒数格式化为时:分:秒格式"""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    seconds = int(seconds % 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-# 修改进度报告函数，增加时间显示
-def report_progress(self, message: str, percent: float):
-    if self.progress_callback:
-        try:
-            # 如果处理已经开始，添加已用时间
-            if self.start_time > 0:
-                elapsed_time = time.time() - self.start_time
-                elapsed_str = self._format_time(elapsed_time)
-                message = f"{message} (已用时: {elapsed_str})"
+def _encode_with_ffmpeg(self, input_path, output_path, hardware_type="auto", codec="libx264"):
+    """使用FFmpeg进行视频编码，支持硬件加速"""
+    # 获取FFmpeg路径
+    ffmpeg_cmd = self._get_ffmpeg_cmd()
+    
+    # 构建基本编码命令
+    command = [ffmpeg_cmd, "-y", "-i", input_path]
+    
+    # 根据硬件类型设置编码参数
+    if hardware_type == "nvidia" or (hardware_type == "auto" and codec == "h264_nvenc"):
+        # NVIDIA GPU参数
+        codec = "h264_nvenc"
+        
+        # 兼容模式使用较为保守的参数
+        if self.compatibility_mode:
+            command.extend([
+                "-c:v", codec,
+                "-preset", "medium",  # 中等预设，平衡质量和速度
+                "-tune", "hq",        # 高质量调优
+                "-b:v", f"{self.bitrate}k"
+            ])
+        else:
+            # 性能模式使用更高级的参数
+            command.extend([
+                "-c:v", codec,
+                "-preset", "p4",      # 高性能预设
+                "-tune", "hq",        # 高质量调优
+                "-rc", "vbr_hq",      # 高质量VBR模式
+                "-cq", "23",          # 固定质量参数
+                "-b:v", f"{self.bitrate}k",
+                "-maxrate", f"{int(self.bitrate * 1.5)}k",
+                "-bufsize", f"{self.bitrate * 2}k",
+                "-spatial-aq", "1",   # 空间自适应量化
+                "-temporal-aq", "1"   # 时间自适应量化
+            ])
             
-            self.progress_callback(message, percent)
-        except Exception as e:
-            logger.error(f"调用进度回调时出错: {str(e)}")
+    elif hardware_type == "intel" or (hardware_type == "auto" and codec == "h264_qsv"):
+        # Intel GPU参数
+        codec = "h264_qsv"
+        command.extend([
+            "-c:v", codec,
+            "-preset", "medium",
+            "-b:v", f"{self.bitrate}k",
+            "-maxrate", f"{int(self.bitrate * 1.5)}k"
+        ])
+        
+    elif hardware_type == "amd" or (hardware_type == "auto" and codec == "h264_amf"):
+        # AMD GPU参数
+        codec = "h264_amf"
+        command.extend([
+            "-c:v", codec,
+            "-quality", "quality",
+            "-usage", "transcoding",
+            "-b:v", f"{self.bitrate}k"
+        ])
+        
+    else:
+        # CPU编码参数
+        command.extend([
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-b:v", f"{self.bitrate}k"
+        ])
+    
+    # 添加音频参数和输出路径
+    command.extend([
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-ar", "44100",
+        output_path
+    ])
+    
+    # 创建进度监控线程
+    stop_event = threading.Event()
+    progress_thread = threading.Thread(
+        target=self._monitor_ffmpeg_progress,
+        args=(input_path, stop_event)
+    )
+    progress_thread.daemon = True
+    progress_thread.start()
+    
+    try:
+        # 执行FFmpeg命令
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        stdout, stderr = process.communicate()
+        
+        # 停止进度监控线程
+        stop_event.set()
+        progress_thread.join(timeout=1.0)
+        
+        # 检查命令执行结果
+        if process.returncode != 0:
+            logger.error(f"FFmpeg编码失败: {stderr}")
+            return False
+            
+        return True
+    except Exception as e:
+        logger.error(f"编码过程中出错: {str(e)}")
+        return False
+    finally:
+        # 确保停止监控线程
+        stop_event.set()
+```
+
+**水印添加实现**：
+```python
+def _add_watermark_to_video(self, input_path: str, output_path: str) -> bool:
+    """添加水印到视频"""
+    # 如果未启用水印，直接复制文件
+    if not self.settings.get("watermark_enabled", False):
+        shutil.copy(input_path, output_path)
+        return True
+    
+    # 获取水印文本
+    watermark_text = self._get_watermark_text()
+    
+    # 获取水印设置
+    watermark_size = self.settings.get("watermark_size", 24)
+    watermark_color = self.settings.get("watermark_color", "#FFFFFF")
+    watermark_position = self.settings.get("watermark_position", "右下角")
+    watermark_pos_x = self.settings.get("watermark_pos_x", 20)
+    watermark_pos_y = self.settings.get("watermark_pos_y", 20)
+    
+    # 获取分辨率和字体大小
+    video_dimensions = self._get_video_dimensions(input_path)
+    if not video_dimensions:
+        return False
+    
+    width, height = video_dimensions
+    
+    # 根据视频分辨率调整字体大小
+    font_size = int(min(width, height) * watermark_size / 1080)
+    
+    # 获取FFmpeg命令
+    ffmpeg_cmd = self._get_ffmpeg_cmd()
+    
+    # 确定水印位置
+    position_map = {
+        "右上角": f"x=w-tw-{watermark_pos_x}:y={watermark_pos_y}",
+        "左上角": f"x={watermark_pos_x}:y={watermark_pos_y}",
+        "右下角": f"x=w-tw-{watermark_pos_x}:y=h-th-{watermark_pos_y}",
+        "左下角": f"x={watermark_pos_x}:y=h-th-{watermark_pos_y}",
+        "中心": f"x=(w-tw)/2+{watermark_pos_x}:y=(h-th)/2+{watermark_pos_y}"
+    }
+    
+    position = position_map.get(watermark_position, position_map["右下角"])
+    
+    # 构建FFmpeg命令
+    command = [
+        ffmpeg_cmd, "-y",
+        "-i", input_path,
+        "-vf", f"drawtext=text='{watermark_text}':fontcolor={watermark_color}:fontsize={font_size}:{position}:alpha=0.8",
+        "-c:a", "copy",
+        output_path
+    ]
+    
+    try:
+        process = subprocess.run(command, check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"添加水印失败: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"添加水印出错: {str(e)}")
+        return False
 ```
 
 ##### 异常处理与边界情况
-1. **素材不足**：检测场景文件夹中视频数量，数量不足时提供警告
-2. **视频时长不足**：优先选择时长足够的视频，时长不足时使用较短视频并提供警告
-3. **编码失败**：捕获FFmpeg异常，记录错误信息并返回失败状态
-4. **处理中断**：支持用户中断处理过程，通过stop_requested标志检查
-5. **GPU不可用**：检测GPU状态，不可用时降级到CPU编码
-6. **中文路径问题**：在Windows系统中特别处理FFmpeg无法正确识别的中文路径
+1. **素材不足**：检测每个场景文件夹中视频和音频数量，数量不足时提供警告并跳过该场景
+2. **视频时长不足**：
+   - 单视频模式：优先选择时长足够的视频，如无则选择最长视频
+   - 多视频拼接模式：组合多个视频达到所需时长，必要时重复使用视频
+3. **编码失败**：捕获FFmpeg异常，提供详细错误日志，降级到其他编码器或CPU编码
+4. **处理中断**：通过检查stop_requested标志实现用户中断处理的能力
+5. **GPU不可用**：检测硬件加速支持状态，不可用时自动降级到CPU编码
+6. **文件路径问题**：特别处理Windows中文路径，确保FFmpeg能正确识别
 
 ##### 注意事项
-- 视频选择优先考虑未使用过的视频，避免重复
-- 视频裁剪统一从开头开始，便于素材准备和预览
-- 重编码模式兼容性更好但速度较慢，快速不重编码模式速度更快但可能与某些特效不兼容
-- GPU加速效果与显卡型号和驱动版本相关
-- 远程桌面环境下部分GPU加速功能可能受限
-
-##### 变更记录
-- 2023-05-20: 优化视频抽取规则，确保从每个场景文件夹只随机抽取一个时长符合要求的视频
-- 2023-06-01: 改进视频裁剪逻辑，从视频开头裁剪而不是随机位置
-- 2023-06-10: 添加处理计时功能，显示处理时间信息
+- 抽取模式对视频选择和处理逻辑有显著影响，应根据素材特点选择合适的模式
+- 硬件加速效果与GPU型号、驱动版本密切相关，旧版驱动可能需要启用兼容模式
+- 远程桌面环境下GPU加速可能受限，应提供自动降级机制
+- 处理高分辨率视频时内存占用较大，应注意资源管理
+- 复杂转场效果和多视频拼接会显著增加处理时间
 
 ### 4.3 音频处理模块 (core/audio_processor.py)
 
 **模块状态**：✅ 完成  
-**版本号**：1.0.0  
-**最后更新日期**：2023-05-10  
+**版本号**：1.1.0  
+**最后更新日期**：2023-06-01  
 
 #### 模块详情
 
 ##### 模块概览
-音频处理模块负责处理音频文件，包括音频提取、音量调整、音频混合以及背景音乐添加等功能。该模块为视频处理提供音频支持，确保视频和音频同步并提供高质量的声音效果。
+音频处理模块负责背景音乐处理、音频配音管理、音量调节以及音频特效应用。该模块与视频处理模块紧密协作，提供音频资源的智能处理能力，确保视频的音频效果专业且和谐。
 
 ##### 功能点列表
-1. 音频提取（从视频中）
-2. 音量调整
-3. 音频混合
-4. 背景音乐添加
-5. 静音检测
-6. 音频分割
-7. 音频标准化
+1. 背景音乐裁剪和循环
+2. 多音轨混合与平衡
+3. 配音与背景音乐音量自动均衡
+4. 音频淡入淡出效果
+5. 音频标准化处理
+6. 音频格式转换
+7. 语音增强处理
 
 ##### 接口定义
 
 | 接口名称 | 输入参数 | 返回值 | 描述 |
 |---------|---------|--------|------|
-| mix_audio | audio_paths: List[str], volumes: List[float] = None | str | 混合多个音频文件 |
-| add_bgm | audio_path: str, bgm_path: str, voice_volume: float = None, bgm_volume: float = None | str | 添加背景音乐到人声音频 |
-| extract_audio | video_path: str | str | 从视频文件中提取音频 |
-| adjust_volume | audio_path: str, volume: float | str | 调整音频音量 |
-| detect_silence | audio_path: str, threshold: float = -40 | List[Tuple[float, float]] | 检测音频中的静音部分 |
-| normalize_audio | audio_path: str | str | 标准化音频音量 |
+| process_background_music | bgm_path: str, target_duration: float, fade_duration: float = 1.0 | AudioFileClip | 处理背景音乐，调整为目标时长并添加淡入淡出效果 |
+| mix_audio_tracks | main_audio: AudioFileClip, background_audio: AudioFileClip = None, main_volume: float = 1.0, bg_volume: float = 0.3 | CompositeAudioClip | 混合主音频和背景音乐 |
+| analyze_audio_volume | audio_path: str | Dict[str, float] | 分析音频音量特征，包括平均音量、峰值等 |
+| normalize_audio | audio_clip: AudioFileClip, target_db: float = -20 | AudioFileClip | 对音频进行标准化处理，使平均音量达到目标值 |
+| convert_audio_format | input_path: str, output_path: str, format: str = "mp3", bitrate: str = "192k" | bool | 转换音频格式 |
+| enhance_voice | audio_clip: AudioFileClip | AudioFileClip | 对人声进行增强处理 |
+| extract_audio_from_video | video_path: str, output_path: str = None | str | 从视频中提取音频 |
 
 ##### 核心处理流程
-1. **音频混合**：
-   - 加载多个音频文件
-   - 调整各个音频的音量
-   - 混合音频并导出
 
-2. **背景音乐添加**：
-   - 加载人声音频和背景音乐
-   - 调整人声和背景音乐的音量
-   - 混合并导出最终音频
+1. **背景音乐处理流程**：
+   - 加载背景音乐文件
+   - 分析音频时长
+   - 根据目标时长调整音频：
+     - 时长不足时进行循环延长
+     - 时长过长时进行裁剪
+   - 添加淡入淡出效果
+   - 返回处理后的音频片段
 
-3. **音频提取**：
-   - 使用FFmpeg从视频文件中提取音频轨道
-   - 转换为标准格式（MP3）
-   - 返回提取的音频文件路径
+2. **音频混合流程**：
+   - 加载主音频和背景音乐
+   - 应用音量调整系数
+   - 确保背景音乐时长匹配主音频
+   - 创建复合音频片段
+   - 返回混合后的音频
+
+3. **音频标准化流程**：
+   - 分析音频音量特征
+   - 计算需要的增益调整
+   - 应用音量增益
+   - 确保不超过最大音量限制
+   - 返回标准化后的音频
 
 ##### 技术实现要点
-- 使用pydub库处理音频文件
-- 通过FFmpeg提取视频中的音频
-- 实现音频音量的动态调整
-- 支持音频片段的静音检测和剪辑
-- 创建临时目录存储处理过程中的音频文件
+- 使用MoviePy的AudioFileClip实现基础音频处理
+- 利用NumPy进行音频数据分析和处理
+- 通过FFmpeg实现高效的音频格式转换
+- 采用动态音量调整算法优化背景音乐与配音的平衡
+- 实现音频循环算法，确保循环点平滑过渡
 
 ##### 技术选型说明
-- **pydub**：提供简洁的Python接口，适合音频基础处理
-- **FFmpeg**：用于高效的音频编解码和格式转换
-- **混合使用这两种工具**：结合pydub的易用性和FFmpeg的高效性
+- **MoviePy AudioFileClip**：提供强大的音频处理基础功能
+- **NumPy**：高效处理音频数组数据，支持复杂音频分析
+- **FFmpeg**：作为底层音频转换和处理引擎，提高效率
+- **动态音量调整算法**：动态根据配音音量调整背景音乐，提升听感体验
 
 ##### 技术实现细节
+
+**背景音乐处理实现**：
 ```python
-class AudioProcessor:
-    """音频处理核心类"""
+def process_background_music(bgm_path: str, target_duration: float, fade_duration: float = 1.0) -> AudioFileClip:
+    """
+    处理背景音乐，调整为目标时长并添加淡入淡出效果
     
-    def __init__(self, settings=None):
-        """初始化音频处理器"""
-        self.settings = settings or {}
-        self.temp_dir = Path(tempfile.gettempdir()) / "videomixer" / "audio"
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
+    Args:
+        bgm_path: 背景音乐文件路径
+        target_duration: 目标时长(秒)
+        fade_duration: 淡入淡出时长(秒)
+        
+    Returns:
+        AudioFileClip: 处理后的背景音乐片段
+    """
+    if not os.path.exists(bgm_path):
+        logger.error(f"背景音乐文件不存在: {bgm_path}")
+        return None
+        
+    try:
+        # 加载背景音乐
+        bgm_clip = AudioFileClip(bgm_path)
+        bgm_duration = bgm_clip.duration
+        
+        # 如果背景音乐时长不足，循环延长
+        if bgm_duration < target_duration:
+            loops_needed = math.ceil(target_duration / bgm_duration)
+            bgm_clips = [bgm_clip] * loops_needed
+            bgm_clip = concatenate_audioclips(bgm_clips)
+        
+        # 裁剪到目标时长
+        bgm_clip = bgm_clip.subclip(0, target_duration)
+        
+        # 添加淡入淡出效果
+        if fade_duration > 0:
+            # 如果目标时长很短，调整淡入淡出时间
+            if target_duration < fade_duration * 3:
+                fade_duration = target_duration / 4
+                
+            # 应用淡入淡出
+            bgm_clip = bgm_clip.audio_fadein(fade_duration).audio_fadeout(fade_duration)
+        
+        return bgm_clip
+    except Exception as e:
+        logger.error(f"处理背景音乐时出错: {str(e)}")
+        return None
+```
+
+**音频混合实现**：
+```python
+def mix_audio_tracks(main_audio: AudioFileClip, background_audio: AudioFileClip = None, 
+                     main_volume: float = 1.0, bg_volume: float = 0.3) -> CompositeAudioClip:
+    """
+    混合主音频和背景音乐
     
-    def mix_audio(self, audio_paths: List[str], volumes: List[float] = None) -> str:
-        """
-        混合多个音频文件
+    Args:
+        main_audio: 主音频片段(通常是配音)
+        background_audio: 背景音乐片段
+        main_volume: 主音频音量系数(0.0-1.0)
+        bg_volume: 背景音乐音量系数(0.0-1.0)
         
-        Args:
-            audio_paths: 音频文件路径列表
-            volumes: 对应的音量调整因子列表 (1.0表示原音量)
+    Returns:
+        CompositeAudioClip: 混合后的音频片段
+    """
+    if main_audio is None:
+        logger.warning("主音频为空，无法混合")
+        return None
+        
+    # 调整主音频音量
+    main_audio = main_audio.volumex(main_volume)
+    
+    # 如果没有背景音乐，直接返回主音频
+    if background_audio is None:
+        return main_audio
+        
+    # 确保背景音乐时长与主音频一致
+    if background_audio.duration < main_audio.duration:
+        # 如需循环延长背景音乐
+        logger.debug(f"背景音乐时长不足，需要循环延长")
+        return None  # 此处需要调用process_background_music
+    elif background_audio.duration > main_audio.duration:
+        # 裁剪背景音乐
+        background_audio = background_audio.subclip(0, main_audio.duration)
+    
+    # 调整背景音乐音量
+    background_audio = background_audio.volumex(bg_volume)
+    
+    # 创建复合音频片段
+    return CompositeAudioClip([main_audio, background_audio])
+```
+
+**音频标准化实现**：
+```python
+def normalize_audio(audio_clip: AudioFileClip, target_db: float = -20) -> AudioFileClip:
+    """
+    对音频进行标准化处理，使平均音量达到目标值
+    
+    Args:
+        audio_clip: 输入音频片段
+        target_db: 目标平均音量(dB)
+        
+    Returns:
+        AudioFileClip: 标准化后的音频片段
+    """
+    if audio_clip is None:
+        logger.warning("输入音频为空，无法进行标准化")
+        return None
+        
+    try:
+        # 获取音频数组
+        audio_array = audio_clip.to_soundarray()
+        
+        # 计算当前RMS
+        rms = np.sqrt(np.mean(audio_array**2))
+        
+        # 将RMS转换为dB
+        current_db = 20 * np.log10(rms) if rms > 0 else -100
+        
+        # 计算需要的增益
+        gain_db = target_db - current_db
+        gain_factor = 10**(gain_db/20)
+        
+        # 限制增益，避免过度放大噪音
+        if gain_factor > 5:
+            logger.warning(f"音频增益过大({gain_factor:.2f})，已限制为5")
+            gain_factor = 5
             
-        Returns:
-            str: 混合后的音频文件路径
-        """
-        if not audio_paths:
-            return None
-            
-        output_path = self.temp_dir / f"mixed_{uuid.uuid4().hex}.mp3"
+        # 应用增益
+        normalized_clip = audio_clip.volumex(gain_factor)
         
-        # 如果只有一个音频文件且不需要调整音量，直接复制
-        if len(audio_paths) == 1 and (not volumes or volumes[0] == 1.0):
-            shutil.copy(audio_paths[0], output_path)
-            return str(output_path)
-        
-        # 使用pydub混合音频
-        result = None
-        volumes = volumes or [1.0] * len(audio_paths)
-        
-        for i, path in enumerate(audio_paths):
-            segment = AudioSegment.from_file(path)
-            # 调整音量
-            if volumes[i] != 1.0:
-                segment = segment + (20 * math.log10(volumes[i]))
-            
-            if result is None:
-                result = segment
-            else:
-                result = result.overlay(segment)
-        
-        result.export(output_path, format="mp3")
-        return str(output_path)
+        return normalized_clip
+    except Exception as e:
+        logger.error(f"音频标准化处理出错: {str(e)}")
+        return audio_clip  # 出错时返回原始音频
 ```
 
 ##### 异常处理与边界情况
-1. **无音频文件**：处理空音频列表的情况，返回None
-2. **音频格式不支持**：使用try-except捕获音频加载异常，尝试使用FFmpeg转换为支持的格式
-3. **音量过大/过小**：限制音量调整范围，防止溢出或无声
-4. **文件权限问题**：在临时目录创建文件前检查写入权限
-5. **音频处理异常**：记录详细错误信息，便于调试
+1. **文件不存在**：检测音频文件存在性，不存在时返回明确错误
+2. **时长过短**：处理极短音频时自动调整淡入淡出时长，避免效果不自然
+3. **音量异常**：限制音量增益上限，避免放大噪音
+4. **文件格式不支持**：提供友好错误信息，建议转换为支持的格式
+5. **处理失败**：音频处理失败时返回原始音频，确保不中断主流程
 
 ##### 注意事项
-- 音频混合可能导致音质损失，应谨慎调整音量参数
-- 背景音乐音量应适当降低，避免掩盖人声
-- 处理大音频文件时应注意内存占用
-- 音频标准化可能导致噪音放大，需在必要时使用
-- 临时文件应在处理完成后及时清理
+- 音频混合时主音频和背景音乐的音量比例对最终效果有重要影响
+- 不同类型的配音可能需要不同的音量标准化参数
+- 过度的音频处理可能引入噪音或失真
+- 音频循环应选择合适的循环点，避免节奏不连贯
+- 人声增强处理适用于清晰度较低的配音素材，但可能放大背景噪音
 
-### 4.4 转场特效模块 (transitions/effects.py)
+### 4.4 转场效果模块 (effects/transitions.py)
 
 **模块状态**：✅ 完成  
-**版本号**：1.0.0  
-**最后更新日期**：2023-05-08  
+**版本号**：1.3.0  
+**最后更新日期**：2023-06-10  
 
 #### 模块详情
 
 ##### 模块概览
-转场特效模块提供视频片段之间的过渡效果，包括淡入淡出、镜像翻转、色相偏移等多种效果。该模块设计为可扩展结构，便于添加新效果，同时提供统一的接口。
+转场效果模块负责实现视频片段之间的各种过渡效果，包括淡入淡出、滑动、缩放、旋转等多种视觉效果。该模块设计为可扩展的效果库，支持用户进行单独选择或随机组合应用，大幅提升视频的专业感和观赏性。
 
 ##### 功能点列表
-1. 淡入淡出效果
-2. 镜像翻转效果
-3. 色相偏移效果
-4. 像素化效果
-5. 旋转缩放效果
-6. 速度波动效果
-7. 分屏滑动效果
-8. 无转场效果（直接拼接）
+1. 基础转场效果（淡入淡出、叠化、擦除）
+2. 动态转场效果（滑动、缩放、旋转）
+3. 高级视觉效果（闪光、模糊、波纹）
+4. 效果参数自定义配置
+5. 随机或智能效果选择
+6. 自定义转场效果注册机制
 
 ##### 接口定义
 
 | 接口名称 | 输入参数 | 返回值 | 描述 |
 |---------|---------|--------|------|
-| apply | clip1: VideoClip, clip2: VideoClip, duration: float = 1.0 | VideoClip | 应用转场效果到两个视频片段 |
-| get_available_effects | None | List[str] | 获取所有可用的转场效果名称 |
-| get_effect | name: str | TransitionEffect | 根据名称获取转场效果实例 |
+| apply_transition | clip1: VideoFileClip, clip2: VideoFileClip, transition_name: str, duration: float | VideoFileClip | 应用指定转场效果连接两个视频片段 |
+| get_available_transitions | None | List[Dict[str, Any]] | 获取所有可用的转场效果及其参数 |
+| register_transition | name: str, func: Callable, args_schema: Dict[str, Any] | bool | 注册自定义转场效果 |
+| random_transition | clip1: VideoFileClip, clip2: VideoFileClip, duration: float | VideoFileClip | 应用随机选择的转场效果 |
+| fade_transition | clip1: VideoFileClip, clip2: VideoFileClip, duration: float | VideoFileClip | 淡入淡出转场 |
+| slide_transition | clip1: VideoFileClip, clip2: VideoFileClip, duration: float, direction: str = "left" | VideoFileClip | 滑动转场 |
+| zoom_transition | clip1: VideoFileClip, clip2: VideoFileClip, duration: float, direction: str = "in" | VideoFileClip | 缩放转场 |
+| wipe_transition | clip1: VideoFileClip, clip2: VideoFileClip, duration: float, direction: str = "left" | VideoFileClip | 擦除转场 |
+| rotate_transition | clip1: VideoFileClip, clip2: VideoFileClip, duration: float | VideoFileClip | 旋转转场 |
+| flash_transition | clip1: VideoFileClip, clip2: VideoFileClip, duration: float | VideoFileClip | 闪光转场 |
 
 ##### 核心处理流程
-1. **基础转场应用**：
-   - 接收两个视频片段和转场时长
-   - 根据效果类型计算转场区域
-   - 应用特定效果算法
-   - 返回带有转场效果的新视频片段
 
-2. **效果选择流程**：
-   - 通过效果名称获取对应效果类
-   - 实例化效果对象
-   - 调用apply方法应用效果
+1. **转场效果应用流程**：
+   - 接收两个视频片段和转场类型参数
+   - 根据转场名称查找对应的效果函数
+   - 应用转场效果函数，生成转场视频片段
+   - 返回包含两个原始片段和转场效果的最终视频片段
+
+2. **随机转场效果选择流程**：
+   - 获取可用转场效果列表
+   - 根据兼容性和视频特性筛选合适的效果
+   - 随机选择一种转场效果
+   - 应用所选转场效果
+
+3. **自定义转场效果注册流程**：
+   - 检验自定义转场函数的参数和返回值是否符合接口要求
+   - 将转场函数注册到转场效果字典中
+   - 更新可用转场效果列表
 
 ##### 技术实现要点
-- 基于MoviePy实现视频特效
-- 使用面向对象设计，所有效果继承自基类
-- 支持可配置参数，调整效果强度和表现
-- 实现效果注册机制，便于动态添加新效果
+- 使用MoviePy的视频合成和特效功能实现各种转场效果
+- 通过动态计算和插值实现平滑的转场动画
+- 利用数学函数创建各种运动曲线，增强转场效果的视觉冲击力
+- 通过装饰器模式简化转场效果的注册和管理
+- 实现基于视频内容特征的智能转场效果推荐
 
 ##### 技术选型说明
-- **MoviePy**：提供简洁的特效API和视频处理能力
-- **面向对象设计**：便于扩展和维护效果库
-- **工厂模式**：通过名称动态创建效果实例
+- **MoviePy**：提供丰富的视频处理API，适合实现各种复杂的转场效果
+- **NumPy**：用于高效的数学计算和插值运算
+- **动态效果生成**：通过算法生成转场效果，减少预设资源的依赖
+- **装饰器模式**：简化新转场效果的添加流程，提高扩展性
 
 ##### 技术实现细节
+
+**转场效果框架实现**：
 ```python
-class TransitionEffect:
+# 转场效果注册装饰器
+def register(name: str, description: str = "", args_schema: Dict[str, Any] = None):
+    def decorator(func):
+        transitions_registry[name] = {
+            "function": func,
+            "description": description,
+            "args_schema": args_schema or {}
+        }
+        return func
+    return decorator
+
+def apply_transition(clip1: VideoFileClip, clip2: VideoFileClip, 
+                   transition_name: str = "fade", duration: float = 1.0, 
+                   **kwargs) -> VideoFileClip:
     """
-    转场效果基类
-    - 支持自定义效果
-    - 参数可配置
-    - 性能优先
+    应用指定的转场效果连接两个视频片段
+    
+    Args:
+        clip1: 第一个视频片段
+        clip2: 第二个视频片段
+        transition_name: 转场效果名称
+        duration: 转场时长(秒)
+        **kwargs: 转场效果的额外参数
+        
+    Returns:
+        VideoFileClip: 应用转场效果后的视频片段
     """
-    def __init__(self, **kwargs):
-        """初始化转场效果"""
-        self.params = kwargs
+    # 默认使用淡入淡出
+    if transition_name not in transitions_registry:
+        logger.warning(f"未找到转场效果 '{transition_name}'，使用默认淡入淡出")
+        transition_name = "fade"
+        
+    # 获取转场函数
+    transition_func = transitions_registry[transition_name]["function"]
     
-    def apply(self, clip1, clip2, duration=1.0):
-        """
-        应用转场效果
-        
-        Args:
-            clip1: 第一个视频片段
-            clip2: 第二个视频片段
-            duration: 转场时长(秒)
-            
-        Returns:
-            VideoClip: 应用效果后的视频片段
-        """
-        raise NotImplementedError("子类必须实现apply方法")
+    # 应用转场效果
+    try:
+        return transition_func(clip1, clip2, duration, **kwargs)
+    except Exception as e:
+        logger.error(f"应用转场效果 '{transition_name}' 时出错: {str(e)}")
+        # 失败时回退到最基本的淡入淡出
+        return fade_transition(clip1, clip2, duration)
+```
+
+**淡入淡出转场实现**：
+```python
+@register(
+    name="fade",
+    description="淡入淡出过渡效果",
+    args_schema={"duration": {"type": "float", "default": 1.0, "min": 0.3, "max": 3.0}}
+)
+def fade_transition(clip1: VideoFileClip, clip2: VideoFileClip, 
+                    duration: float = 1.0, **kwargs) -> VideoFileClip:
+    """
+    淡入淡出转场效果
     
-class FadeTransition(TransitionEffect):
-    """淡入淡出转场效果"""
+    Args:
+        clip1: 第一个视频片段
+        clip2: 第二个视频片段
+        duration: 转场时长(秒)
+        
+    Returns:
+        VideoFileClip: 应用淡入淡出效果后的视频片段
+    """
+    # 检查并调整时长
+    duration = min(duration, min(clip1.duration, clip2.duration) / 2)
     
-    def apply(self, clip1, clip2, duration=1.0):
-        """应用淡入淡出效果"""
-        # 计算转场区域
-        end_time = clip1.duration
-        start_time = max(0, end_time - duration)
+    # 创建第一个片段的淡出效果
+    clip1 = clip1.fadein(0).fadeout(duration)
+    
+    # 创建第二个片段的淡入效果
+    clip2 = clip2.fadein(duration).fadeout(0)
+    
+    # 计算转场开始时间
+    trans_start = clip1.duration - duration
+    
+    # 合成转场效果
+    return CompositeVideoClip([
+        clip1.set_start(0),
+        clip2.set_start(trans_start)
+    ]).subclip(0, clip1.duration + clip2.duration - duration)
+```
+
+**滑动转场实现**：
+```python
+@register(
+    name="slide",
+    description="滑动过渡效果",
+    args_schema={
+        "duration": {"type": "float", "default": 1.0, "min": 0.3, "max": 3.0},
+        "direction": {"type": "string", "default": "left", "enum": ["left", "right", "up", "down"]}
+    }
+)
+def slide_transition(clip1: VideoFileClip, clip2: VideoFileClip, 
+                     duration: float = 1.0, direction: str = "left", **kwargs) -> VideoFileClip:
+    """
+    滑动转场效果
+    
+    Args:
+        clip1: 第一个视频片段
+        clip2: 第二个视频片段
+        duration: 转场时长(秒)
+        direction: 滑动方向，可选 'left', 'right', 'up', 'down'
         
-        # 创建淡出效果
-        clip1_fade = clip1.fx(vfx.fadeout, duration)
+    Returns:
+        VideoFileClip: 应用滑动转场效果后的视频片段
+    """
+    # 检查参数
+    valid_directions = ['left', 'right', 'up', 'down']
+    if direction not in valid_directions:
+        logger.warning(f"无效的滑动方向 '{direction}'，使用默认值 'left'")
+        direction = 'left'
         
-        # 创建淡入效果
-        clip2_fade = clip2.fx(vfx.fadein, duration)
+    # 获取视频尺寸
+    w, h = clip1.size
+    
+    # 定义滑动位置计算函数
+    def get_pos_func(t):
+        progress = min(1, t / duration)
         
-        # 计算第二个视频的开始时间
-        clip2_start = end_time - duration
+        # 使用缓动函数使运动更自然
+        progress = ease_in_out(progress)
         
-        # 组合两个视频
-        final_clip = CompositeVideoClip([
-            clip1_fade,
-            clip2_fade.set_start(clip2_start)
-        ])
+        if direction == 'left':
+            return lambda t: (w - w * progress, 0)
+        elif direction == 'right':
+            return lambda t: (-w + w * progress, 0)
+        elif direction == 'up':
+            return lambda t: (0, h - h * progress)
+        elif direction == 'down':
+            return lambda t: (0, -h + h * progress)
+    
+    # 应用滑动效果到第二个片段
+    clip2_moved = clip2.set_position(get_pos_func)
+    
+    # 计算转场开始时间
+    trans_start = clip1.duration - duration
+    
+    # 合成转场效果
+    return CompositeVideoClip([
+        clip1.set_start(0),
+        clip2_moved.set_start(trans_start)
+    ]).subclip(0, clip1.duration + clip2.duration - duration)
+    
+def ease_in_out(t):
+    """缓动函数：慢开始，慢结束，中间加速"""
+    return 0.5 * (1 - np.cos(np.pi * t))
+```
+
+**随机转场选择实现**：
+```python
+def random_transition(clip1: VideoFileClip, clip2: VideoFileClip, 
+                      duration: float = 1.0, 
+                      excluded: List[str] = None) -> VideoFileClip:
+    """
+    应用随机选择的转场效果
+    
+    Args:
+        clip1: 第一个视频片段
+        clip2: 第二个视频片段
+        duration: 转场时长(秒)
+        excluded: 排除的转场效果列表
         
-        return final_clip
+    Returns:
+        VideoFileClip: 应用随机转场效果后的视频片段
+    """
+    # 获取所有可用转场
+    available_transitions = list(transitions_registry.keys())
+    
+    # 排除指定的转场效果
+    if excluded:
+        available_transitions = [t for t in available_transitions if t not in excluded]
+        
+    # 如果没有可用转场，使用默认淡入淡出
+    if not available_transitions:
+        logger.warning("没有可用的转场效果，使用默认淡入淡出")
+        return fade_transition(clip1, clip2, duration)
+        
+    # 随机选择一个转场效果
+    transition_name = random.choice(available_transitions)
+    
+    # 应用选中的转场效果
+    logger.debug(f"随机选择转场效果: {transition_name}")
+    return apply_transition(clip1, clip2, transition_name, duration)
 ```
 
 ##### 异常处理与边界情况
-1. **效果名称无效**：检测效果名称是否存在，不存在则使用默认效果
-2. **视频长度不足**：检测视频时长是否足够应用转场，不足则调整转场时长
-3. **效果参数无效**：验证效果参数，无效参数使用默认值
-4. **内存占用过高**：监控内存使用，优化大视频文件的处理方式
+1. **转场时长过长**：自动调整转场时长，确保不超过视频片段自身时长的一半
+2. **转场效果不存在**：提供友好错误信息，回退到默认的淡入淡出效果
+3. **参数无效**：检查参数的有效性，对无效参数使用默认值
+4. **处理失败**：捕获转场效果应用过程中的异常，提供回退方案
+5. **视频分辨率不匹配**：自动调整片段分辨率，确保转场效果正确应用
 
 ##### 注意事项
-- 复杂转场效果可能显著增加处理时间
-- 转场效果应用可能导致视频质量轻微下降
-- 无转场模式可大幅提高处理速度
-- 不同转场效果对视频内容的要求不同，应根据视频内容选择合适的效果
+- 部分复杂转场效果对计算资源要求较高，在处理高分辨率视频时可能导致性能问题
+- 某些转场效果可能不适用于所有类型的视频内容，应根据视频特性选择合适的效果
+- 转场时长会影响视频的节奏感，应根据内容和目标风格进行合理设置
+- 转场效果的大小和方向可以考虑与视频内容的运动方向相协调，增强连贯性
+- 自定义转场效果需遵循统一的接口规范，确保与系统其他部分兼容
 
 ### 4.5 硬件管理模块 (hardware/)
 
@@ -917,69 +1419,157 @@ class SystemAnalyzer:
 ### 4.6 用户界面模块 (ui/main_window.py)
 
 **模块状态**：✅ 完成  
-**版本号**：1.1.0  
-**最后更新日期**：2023-06-05  
+**版本号**：1.2.0  
+**最后更新日期**：2023-06-12  
 
 #### 模块详情
 
 ##### 模块概览
-用户界面模块提供图形用户界面，负责用户交互、状态显示、参数设置以及与核心处理模块的通信。界面设计采用清晰简洁的布局，提供直观的操作流程，并支持拖拽导入等便捷功能。
+用户界面模块负责提供直观友好的图形交互界面，连接用户操作与核心处理功能。该模块采用PyQt5框架实现，提供材料导入、参数设置、处理进度显示等功能，并通过信号槽机制与后台处理线程进行通信，确保界面响应流畅。
 
 ##### 功能点列表
-1. 素材文件夹导入与管理
-2. 拖拽导入支持
-3. 参数设置界面
-4. 处理进度显示
-5. 处理时间统计
-6. 结果预览与打开
-7. 错误提示与日志显示
+1. 主窗口界面布局与样式
+2. 素材文件夹导入与管理（包括拖拽支持）
+3. 参数配置面板（分辨率、比特率、转场效果等）
+4. 硬件加速选项配置
+5. 处理进度显示与实时反馈
+6. 批量处理控制
+7. 日志显示与错误提示
+8. 处理结果预览
+9. 偏好设置保存与加载
 
 ##### 接口定义
 
 | 接口名称 | 输入参数 | 返回值 | 描述 |
 |---------|---------|--------|------|
-| add_material_folder | folder_path: str | bool | 添加素材文件夹 |
-| remove_selected_folders | None | None | 移除选中的文件夹 |
-| set_transition_effect | effect_name: str | None | 设置转场效果 |
-| set_hardware_acceleration | hardware_type: str | None | 设置硬件加速类型 |
-| process_videos | None | None | 开始处理视频 |
+| __init__ | settings_file: str = None | None | 初始化主窗口 |
+| add_material_folder | folder_path: str, extract_mode: str = "single_video" | bool | 添加素材文件夹 |
+| remove_material_folder | index: int = -1 | bool | 移除素材文件夹 |
+| start_processing | None | None | 开始处理视频 |
+| stop_processing | None | None | 停止处理视频 |
 | on_progress_update | message: str, percent: float | None | 更新进度显示 |
-| on_compose_completed | success: bool, count: int, output_dir: str, total_time: str | None | 处理完成回调 |
+| on_process_completed | success: bool, videos: List[str], time_used: str | None | 处理完成回调 |
+| save_settings | filename: str = None | bool | 保存当前设置 |
+| load_settings | filename: str = None | bool | 加载设置 |
+| open_about_dialog | None | None | 打开关于对话框 |
+| open_help | None | None | 打开帮助文档 |
 
 ##### 核心处理流程
-1. **界面初始化**：
-   - 创建UI组件
-   - 连接信号与槽
-   - 初始化系统分析器
-   - 加载配置
 
-2. **素材导入流程**：
-   - 添加素材文件夹
-   - 验证文件夹结构
-   - 更新界面显示
+1. **界面初始化流程**：
+   - 创建主窗口和UI组件
+   - 设置布局和样式
+   - 连接信号与槽
+   - 初始化设置
+   - 加载用户配置
+   - 检测系统硬件
+
+2. **素材文件夹导入流程**：
+   - 接收文件夹路径（通过对话框或拖拽）
+   - 验证文件夹结构（检查视频和配音子文件夹）
+   - 分析文件夹内容（统计视频和音频文件数量）
+   - 添加到素材列表并更新UI
+   - 创建素材预览缩略图
 
 3. **视频处理流程**：
-   - 收集处理参数
-   - 创建视频处理器
-   - 启动处理线程
-   - 显示处理进度
-   - 处理完成后通知用户
+   - 收集UI参数（分辨率、比特率、转场效果等）
+   - 验证参数有效性
+   - 创建处理线程
+   - 启动处理并显示进度
+   - 接收处理结果并更新UI
+   - 提供结果预览或打开选项
 
 ##### 技术实现要点
-- 使用PyQt5创建图形界面
-- 实现拖拽导入功能
-- 使用多线程处理视频，保持界面响应
-- 提供实时进度更新和时间统计
-- 实现错误处理和友好提示
+- 使用PyQt5实现图形界面
+- 实现文件拖放功能，支持素材文件夹直接拖入
+- 使用QThread实现后台处理，避免界面卡顿
+- 使用信号槽机制实现线程间通信
+- 实现进度条和状态反馈
+- 支持设置保存和加载
+- 提供错误处理和友好提示
 
 ##### 技术选型说明
-- **PyQt5**：成熟的跨平台图形界面库，提供丰富的控件和自定义能力
-- **多线程处理**：将耗时操作放在单独线程中，避免界面卡顿
-- **信号槽机制**：使用PyQt的信号槽机制实现组件间通信，代码结构清晰
+- **PyQt5**: 成熟的跨平台UI框架，提供丰富的控件和自定义能力
+- **QThread**: PyQt内置的线程机制，确保线程安全
+- **信号槽机制**: 实现组件间低耦合通信
+- **JSON**: 用于配置文件存储，便于读写和编辑
+- **QSS**: 用于样式定制，提供现代化的界面外观
 
 ##### 技术实现细节
 
-**拖拽导入实现**：
+**主窗口初始化实现**：
+```python
+class MainWindow(QMainWindow):
+    """主窗口类"""
+    
+    def __init__(self, settings_file=None):
+        """初始化主窗口"""
+        super().__init__()
+        
+        # 成员变量初始化
+        self.material_folders = []  # 素材文件夹列表
+        self.processor_thread = None  # 处理线程
+        self.is_processing = False  # 是否正在处理
+        self.system_analyzer = SystemAnalyzer()  # 系统分析器
+        
+        # 界面初始化
+        self.init_ui()
+        
+        # 加载配置
+        self.settings = QSettings("VideoMixTool", "VideoMixTool")
+        if settings_file:
+            self.load_settings(settings_file)
+        else:
+            self.load_settings()
+            
+        # 系统分析
+        self.analyze_system()
+    
+    def init_ui(self):
+        """初始化用户界面"""
+        # 设置窗口基本属性
+        self.setWindowTitle("短视频批量混剪工具")
+        self.setMinimumSize(800, 600)
+        self.setAcceptDrops(True)  # 启用拖放功能
+        
+        # 创建中央控件
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # 创建主布局
+        main_layout = QVBoxLayout(central_widget)
+        
+        # 创建上部工具栏
+        toolbar = self.create_toolbar()
+        main_layout.addWidget(toolbar)
+        
+        # 创建分割器：素材区域和设置区域
+        splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(splitter, 1)
+        
+        # 创建素材区域
+        material_group = self.create_material_group()
+        splitter.addWidget(material_group)
+        
+        # 创建设置区域
+        settings_group = self.create_settings_group()
+        splitter.addWidget(settings_group)
+        
+        # 设置分割器比例
+        splitter.setSizes([300, 500])
+        
+        # 创建底部状态区域
+        status_group = self.create_status_group()
+        main_layout.addWidget(status_group)
+        
+        # 创建菜单栏
+        self.create_menubar()
+        
+        # 创建状态栏
+        self.statusBar().showMessage("就绪")
+```
+
+**素材导入和拖放实现**：
 ```python
 def dragEnterEvent(self, event):
     """处理拖拽进入事件"""
@@ -991,97 +1581,286 @@ def dropEvent(self, event):
     if event.mimeData().hasUrls():
         # 获取拖放的URL
         urls = event.mimeData().urls()
-        paths = [url.toLocalFile() for url in urls]
+        folders = []
+        
+        for url in urls:
+            path = url.toLocalFile()
+            if os.path.isdir(path):
+                folders.append(path)
         
         # 处理拖放的文件夹
-        self._process_dropped_items(paths)
+        if folders:
+            self.process_dropped_folders(folders)
         
         event.acceptProposedAction()
-
-def _process_dropped_items(self, paths):
-    """处理拖放的文件夹"""
-    added_count = 0
-    
-    for path in paths:
-        if os.path.isdir(path):
-            # 添加素材文件夹
-            if self.add_material_folder(path):
-                added_count += 1
-    
-    if added_count > 0:
-        self.statusBar().showMessage(f"成功添加 {added_count} 个素材文件夹")
+        
+def process_dropped_folders(self, folders):
+    """处理拖放的文件夹列表"""
+    valid_count = 0
+    for folder in folders:
+        if self.add_material_folder(folder):
+            valid_count += 1
+            
+    if valid_count > 0:
+        self.statusBar().showMessage(f"成功添加 {valid_count} 个素材文件夹")
     else:
-        self.statusBar().showMessage("未添加任何素材文件夹，请确保拖放的是有效的文件夹")
+        self.statusBar().showMessage("未添加任何有效素材文件夹")
+        
+def add_material_folder(self, folder_path, extract_mode="single_video"):
+    """添加素材文件夹"""
+    # 检查文件夹是否存在
+    if not os.path.isdir(folder_path):
+        self.show_error_message("文件夹不存在", f"指定的路径不是有效的文件夹: {folder_path}")
+        return False
+        
+    # 检查是否已添加
+    folder_path = os.path.abspath(folder_path)
+    for folder in self.material_folders:
+        if os.path.abspath(folder["path"]) == folder_path:
+            self.show_info_message("文件夹已存在", f"该素材文件夹已在列表中: {folder_path}")
+            return False
+    
+    # 检查是否包含视频和配音子文件夹
+    video_folder = os.path.join(folder_path, "视频")
+    audio_folder = os.path.join(folder_path, "配音")
+    
+    # 支持Windows快捷方式
+    if not os.path.isdir(video_folder):
+        lnk_file = video_folder + ".lnk"
+        if os.path.isfile(lnk_file):
+            from utils.file_utils import resolve_shortcut
+            target = resolve_shortcut(lnk_file)
+            if target:
+                video_folder = target
+    
+    if not os.path.isdir(audio_folder):
+        lnk_file = audio_folder + ".lnk"
+        if os.path.isfile(lnk_file):
+            from utils.file_utils import resolve_shortcut
+            target = resolve_shortcut(lnk_file)
+            if target:
+                audio_folder = target
+    
+    # 统计视频和音频文件数量
+    video_count = 0
+    audio_count = 0
+    
+    if os.path.isdir(video_folder):
+        from utils.file_utils import list_media_files
+        media_files = list_media_files(video_folder)
+        video_count = len(media_files.get("videos", []))
+    
+    if os.path.isdir(audio_folder):
+        from utils.file_utils import list_media_files
+        media_files = list_media_files(audio_folder)
+        audio_count = len(media_files.get("audios", []))
+    
+    # 创建文件夹信息并添加到列表
+    folder_info = {
+        "path": folder_path,
+        "name": os.path.basename(folder_path),
+        "video_folder": video_folder,
+        "audio_folder": audio_folder,
+        "video_count": video_count,
+        "audio_count": audio_count,
+        "extract_mode": extract_mode
+    }
+    
+    # 添加到列表
+    self.material_folders.append(folder_info)
+    
+    # 更新UI
+    self.update_material_list()
+    
+    return True
 ```
 
-**处理进度更新实现**：
+**处理线程实现**：
 ```python
-@QtCore.pyqtSlot(str, float)
+def start_processing(self):
+    """开始处理视频"""
+    # 检查是否有素材
+    if not self.material_folders:
+        self.show_error_message("无素材", "请先添加至少一个素材文件夹")
+        return
+        
+    # 检查输出目录
+    output_dir = self.line_edit_output.text()
+    if not output_dir:
+        output_dir = os.path.join(os.path.expanduser("~"), "Documents", "VideoMixTool")
+        self.line_edit_output.setText(output_dir)
+    
+    if not os.path.exists(output_dir):
+        try:
+            os.makedirs(output_dir)
+        except Exception as e:
+            self.show_error_message("创建输出目录失败", f"无法创建输出目录: {str(e)}")
+            return
+    
+    # 收集处理参数
+    settings = self.collect_settings()
+    
+    # 创建处理线程
+    self.processor_thread = QThread()
+    self.processor = VideoProcessor(settings)
+    self.processor.moveToThread(self.processor_thread)
+    
+    # 连接信号
+    self.processor_thread.started.connect(lambda: self.processor.process_batch(
+        self.material_folders, output_dir, 
+        self.spin_count.value(), 
+        self.line_edit_bgm.text() if self.check_bgm.isChecked() else None
+    ))
+    self.processor.progress_updated.connect(self.on_progress_update)
+    self.processor.process_completed.connect(self.on_process_completed)
+    self.processor.error_occurred.connect(self.on_process_error)
+    
+    # 更新UI状态
+    self.button_start.setEnabled(False)
+    self.button_stop.setEnabled(True)
+    self.progress_bar.setValue(0)
+    self.is_processing = True
+    
+    # 启动线程
+    self.processor_thread.start()
+    
 def on_progress_update(self, message, percent):
-    """更新进度显示"""
-    self.label_progress.setText(message)
+    """处理进度更新"""
+    self.label_status.setText(message)
     self.progress_bar.setValue(int(percent))
     
-    # 更新状态栏
-    self.statusBar().showMessage(message)
-    
-    # 处理界面事件，保持界面响应
-    QtWidgets.QApplication.processEvents()
-
-@QtCore.pyqtSlot(bool, int, str, str)
-def on_compose_completed(self, success=True, count=0, output_dir="", total_time=""):
+def on_process_completed(self, success, videos, time_used):
     """处理完成回调"""
-    # 重置进度条和按钮状态
-    self.progress_bar.setValue(0)
+    # 停止线程
+    if self.processor_thread:
+        self.processor_thread.quit()
+        self.processor_thread.wait()
+        self.processor_thread = None
+    
+    # 更新UI状态
     self.button_start.setEnabled(True)
     self.button_stop.setEnabled(False)
+    self.is_processing = False
     
-    if success and count > 0:
-        self.label_progress.setText(f"合成进度: 已完成 {count} 个视频，用时: {total_time}")
+    # 显示结果
+    if success:
+        self.progress_bar.setValue(100)
+        self.label_status.setText(f"处理完成，共生成 {len(videos)} 个视频，用时 {time_used}")
         
-        # 显示完成消息框
-        QtWidgets.QMessageBox.information(
-            self, 
-            "合成完成", 
-            f"视频合成任务已完成！\n共合成 {count} 个视频，用时 {total_time}\n\n保存在：\n{output_dir}"
-        )
+        # 显示结果对话框
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("处理完成")
+        msg_box.setIcon(QMessageBox.Information)
+        msg_box.setText(f"成功生成 {len(videos)} 个视频，用时 {time_used}")
         
-        # 提供打开输出目录的选项
-        reply = QtWidgets.QMessageBox.question(
-            self,
-            "打开文件夹",
-            "是否打开输出文件夹？",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.Yes
-        )
+        # 添加打开文件夹按钮
+        open_button = msg_box.addButton("打开文件夹", QMessageBox.ActionRole)
+        close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
         
-        if reply == QtWidgets.QMessageBox.Yes:
-            # 打开输出文件夹
-            self._open_folder(output_dir)
+        msg_box.exec_()
+        
+        if msg_box.clickedButton() == open_button:
+            output_dir = os.path.dirname(videos[0]) if videos else self.line_edit_output.text()
+            self.open_folder(output_dir)
     else:
-        self.label_progress.setText("合成失败，请检查素材或设置")
+        self.progress_bar.setValue(0)
+        self.label_status.setText("处理失败")
+        self.show_error_message("处理失败", "视频处理过程中发生错误，请检查日志")
+```
+
+**系统分析与硬件检测实现**：
+```python
+def analyze_system(self):
+    """分析系统硬件"""
+    try:
+        # 显示分析中状态
+        self.statusBar().showMessage("正在分析系统硬件...")
         
-        # 显示错误消息框
-        QtWidgets.QMessageBox.critical(
-            self, 
-            "合成失败", 
-            "视频合成任务失败，请检查素材文件夹和设置。\n详情请查看日志文件。"
-        )
+        # 在后台线程执行分析
+        self.system_thread = QThread()
+        self.system_analyzer.moveToThread(self.system_thread)
+        
+        # 连接信号
+        self.system_thread.started.connect(self.system_analyzer.analyze)
+        self.system_analyzer.analysis_completed.connect(self.on_system_analysis_completed)
+        
+        # 启动线程
+        self.system_thread.start()
+        
+    except Exception as e:
+        self.statusBar().showMessage("系统分析失败")
+        logger.error(f"系统分析出错: {str(e)}")
+        
+def on_system_analysis_completed(self, system_info):
+    """系统分析完成回调"""
+    # 停止线程
+    if self.system_thread:
+        self.system_thread.quit()
+        self.system_thread.wait()
+        self.system_thread = None
+    
+    # 更新UI显示
+    self.statusBar().showMessage("系统分析完成")
+    
+    # 根据系统情况设置默认硬件加速选项
+    gpu_info = system_info.get("gpu", {})
+    ffmpeg_info = system_info.get("ffmpeg", {})
+    
+    # 更新硬件加速下拉框
+    self.combo_hardware.clear()
+    self.combo_hardware.addItem("自动检测", "auto")
+    self.combo_hardware.addItem("CPU (不使用硬件加速)", "none")
+    
+    # 添加检测到的GPU
+    if "nvidia" in gpu_info:
+        self.combo_hardware.addItem(f"NVIDIA ({gpu_info['nvidia']['model']})", "nvidia")
+        self.combo_hardware.setCurrentIndex(1)  # 默认选择NVIDIA
+    
+    if "intel" in gpu_info:
+        self.combo_hardware.addItem(f"Intel ({gpu_info['intel']['model']})", "intel")
+        if "nvidia" not in gpu_info:
+            self.combo_hardware.setCurrentIndex(1)  # 如果没有NVIDIA，默认选择Intel
+    
+    if "amd" in gpu_info:
+        self.combo_hardware.addItem(f"AMD ({gpu_info['amd']['model']})", "amd")
+        if "nvidia" not in gpu_info and "intel" not in gpu_info:
+            self.combo_hardware.setCurrentIndex(1)  # 如果没有NVIDIA和Intel，默认选择AMD
+    
+    # 更新编码器下拉框
+    encoders = ffmpeg_info.get("encoders", [])
+    self.combo_encoder.clear()
+    self.combo_encoder.addItem("自动选择", "auto")
+    
+    if "libx264" in encoders:
+        self.combo_encoder.addItem("H.264 (CPU)", "libx264")
+    
+    if "h264_nvenc" in encoders:
+        self.combo_encoder.addItem("H.264 (NVIDIA GPU)", "h264_nvenc")
+    
+    if "h264_qsv" in encoders:
+        self.combo_encoder.addItem("H.264 (Intel GPU)", "h264_qsv")
+    
+    if "h264_amf" in encoders:
+        self.combo_encoder.addItem("H.264 (AMD GPU)", "h264_amf")
+        
+    # 设置兼容模式复选框
+    if gpu_info.get("compatibility_recommended", False):
+        self.check_compatibility.setChecked(True)
 ```
 
 ##### 异常处理与边界情况
-1. **素材文件夹无效**：检测文件夹结构，提供友好错误提示
-2. **处理中断**：支持用户中断处理，及时停止处理线程
-3. **界面卡顿**：使用多线程避免界面卡顿，保持用户体验
-4. **错误处理**：捕获处理过程中的异常，显示友好错误提示
-5. **参数验证**：在处理前验证参数有效性，避免无效处理
+1. **无素材错误**：检测素材文件夹列表是否为空，为空时提供友好提示
+2. **素材结构无效**：验证素材文件夹结构，对缺少视频或配音文件夹的情况给出警告
+3. **权限不足**：处理文件访问权限问题，提供明确的错误信息
+4. **处理线程异常**：捕获处理线程中的异常，防止界面崩溃
+5. **硬件检测失败**：当硬件检测失败时提供合理的默认值和降级方案
 
 ##### 注意事项
-- 界面响应性对用户体验至关重要，应避免在主线程中执行耗时操作
-- 拖拽功能应提供清晰的视觉反馈
-- 进度更新应适度，过于频繁的更新可能导致界面卡顿
-- 错误提示应友好明确，提供解决建议
-- 界面布局应简洁清晰，避免过度复杂的操作流程
+- 处理过程应在后台线程中执行，避免阻塞UI线程导致界面卡顿
+- 长时间操作应提供进度反馈和取消选项
+- 保存用户偏好设置，下次启动时恢复
+- 提供清晰的错误信息和可能的解决方案
+- 关注界面的易用性和视觉反馈，降低用户学习成本
 
 ## 5. 数据结构设计
 
@@ -1221,172 +2000,178 @@ gpu_config = {
 - **encoder**: 编码器
 - **params**: 编码参数，根据不同GPU类型有不同的参数
 
-## 6. 接口设计
+## 6. 项目依赖管理
 
-### 6.1 视频处理核心接口
+### 6.1 依赖库清单
 
-#### 视频处理器初始化
-```python
-"""
-创建视频处理器实例
+本项目依赖多个第三方库实现其功能。以下是完整的依赖库清单，包括推荐版本号，确保在新环境中能够顺利部署和运行项目。
 
-参数:
-    settings (Dict[str, Any]): 处理设置，包含输出参数、转场参数等
-    progress_callback (Callable[[str, float], None]): 进度回调函数
-    stop_callback (Callable[[], bool]): 停止检查回调函数
-    
-返回:
-    VideoProcessor: 视频处理器实例
-"""
-processor = VideoProcessor(settings, progress_callback, stop_callback)
+#### 核心依赖
+| 依赖库 | 版本号 | 用途说明 |
+|-------|-------|---------|
+| Python | >=3.8.0, <3.10 | 项目基础语言环境 |
+| PyQt5 | 5.15.6 | 图形用户界面框架 |
+| moviepy | 1.0.3 | 视频编辑核心库 |
+| ffmpeg-python | 0.2.0 | FFmpeg Python 封装 |
+| numpy | 1.22.3 | 科学计算库，用于音视频数据处理 |
+| opencv-python | 4.5.5.64 | 计算机视觉库，用于视频处理 |
+| Pillow | 9.1.0 | 图像处理库 |
+| pydub | 0.25.1 | 音频处理库 |
+| scipy | 1.8.0 | 科学计算库，用于音频分析 |
+| pywin32 | 304 | Windows API 访问，用于快捷方式解析 |
+
+#### 辅助依赖
+| 依赖库 | 版本号 | 用途说明 |
+|-------|-------|---------|
+| requests | 2.27.1 | HTTP 请求库，用于检查更新等 |
+| tqdm | 4.64.0 | 进度条显示库 |
+| colorlog | 6.6.0 | 彩色日志输出 |
+| psutil | 5.9.0 | 系统资源监控 |
+| typing-extensions | 4.1.1 | 类型注解支持 |
+
+#### 可选依赖
+| 依赖库 | 版本号 | 用途说明 |
+|-------|-------|---------|
+| py-cpuinfo | 8.0.0 | CPU信息检测 |
+| GPUtil | 1.4.0 | NVIDIA GPU信息检测 |
+| pyaudio | 0.2.11 | 音频播放功能 |
+
+### 6.2 外部依赖
+
+除了Python库依赖外，项目还依赖以下外部程序：
+
+#### FFmpeg
+- **版本**: 推荐 5.0 及以上
+- **用途**: 视频编码、解码和转码的核心组件
+- **获取方式**: 
+  - Windows: 从 [ffmpeg.org](https://ffmpeg.org/download.html) 或 [BtbN's FFmpeg Builds](https://github.com/BtbN/FFmpeg-Builds/releases) 下载
+  - 添加到系统环境变量或通过项目配置文件指定路径
+
+#### NVIDIA CUDA (可选，用于GPU加速)
+- **版本**: 11.6 及以上
+- **用途**: NVIDIA GPU硬件加速
+- **要求**: 兼容的NVIDIA显卡驱动程序
+
+#### AMD AMF (可选，用于GPU加速)
+- **版本**: 与最新AMD驱动兼容的版本
+- **用途**: AMD GPU硬件加速
+- **要求**: 兼容的AMD显卡驱动程序
+
+#### Intel QSV (可选，用于GPU加速)
+- **版本**: 与最新Intel驱动兼容的版本
+- **用途**: Intel GPU硬件加速
+- **要求**: 兼容的Intel核显驱动程序
+
+### 6.3 依赖安装指南
+
+#### 安装Python依赖
+可通过以下方式安装所有Python依赖库：
+
+```bash
+# 安装核心依赖
+pip install PyQt5==5.15.6 moviepy==1.0.3 ffmpeg-python==0.2.0 numpy==1.22.3 opencv-python==4.5.5.64 Pillow==9.1.0 pydub==0.25.1 scipy==1.8.0 pywin32==304
+
+# 安装辅助依赖
+pip install requests==2.27.1 tqdm==4.64.0 colorlog==6.6.0 psutil==5.9.0 typing-extensions==4.1.1
+
+# 安装可选依赖
+pip install py-cpuinfo==8.0.0 GPUtil==1.4.0 pyaudio==0.2.11
 ```
 
-#### 批量处理视频
-```python
-"""
-批量处理视频
+或者可以创建一个`requirements.txt`文件，包含以下内容：
 
-参数:
-    material_folders (List[Dict[str, Any]]): 素材文件夹列表
-    output_dir (str): 输出目录
-    count (int): 生成视频数量
-    bgm_path (str): 背景音乐路径
-    
-返回:
-    Tuple[List[str], str]: 
-        - List[str]: 输出视频路径列表
-        - str: 处理总用时
-"""
-output_videos, total_time = processor.process_batch(material_folders, output_dir, count, bgm_path)
+```
+PyQt5==5.15.6
+moviepy==1.0.3
+ffmpeg-python==0.2.0
+numpy==1.22.3
+opencv-python==4.5.5.64
+Pillow==9.1.0
+pydub==0.25.1
+scipy==1.8.0
+pywin32==304
+requests==2.27.1
+tqdm==4.64.0
+colorlog==6.6.0
+psutil==5.9.0
+typing-extensions==4.1.1
+py-cpuinfo==8.0.0
+GPUtil==1.4.0
+pyaudio==0.2.11
 ```
 
-#### 进度回调函数
-```python
-"""
-进度回调函数
+然后使用以下命令安装：
 
-参数:
-    message (str): 进度消息
-    percent (float): 进度百分比（0-100）
-"""
-def on_progress_update(message: str, percent: float):
-    # 更新UI显示进度
-    pass
+```bash
+pip install -r requirements.txt
 ```
 
-#### 停止检查回调函数
-```python
-"""
-停止检查回调函数
+#### FFmpeg安装指南
 
-返回:
-    bool: 是否应该停止处理
-"""
-def check_stop_requested():
-    # 检查是否用户请求停止
-    return stop_flag
+**Windows安装步骤**:
+1. 从 [ffmpeg.org](https://ffmpeg.org/download.html) 下载FFmpeg
+2. 解压到固定位置(如C:\FFmpeg)
+3. 将bin目录(如C:\FFmpeg\bin)添加到系统环境变量Path中
+4. 重启命令行或IDE以使环境变量生效
+5. 验证安装: 打开命令行，输入`ffmpeg -version`
+
+**通过项目配置文件指定FFmpeg路径**:
+1. 在项目根目录创建`ffmpeg_path.txt`文件
+2. 将FFmpeg可执行文件的完整路径写入该文件，如`C:\FFmpeg\bin\ffmpeg.exe`
+
+### 6.4 版本兼容性说明
+
+- **Python版本**: 推荐使用Python 3.8.x，已经过充分测试。Python 3.9也应该兼容，但Python 3.10+可能存在某些兼容性问题，特别是与PyQt5和某些依赖库的交互。
+
+- **操作系统兼容性**:
+  - Windows 10/11: 完全支持
+  - Windows 7/8: 基本支持，但可能需要安装额外的更新
+  - macOS: 需要修改部分特定于Windows的功能(如.lnk文件解析)
+  - Linux: 需要修改部分特定于Windows的功能，并使用GTK样式
+
+- **GPU加速兼容性**:
+  - NVIDIA: GeForce 900系列及以上，驱动版本 > 460.xx
+  - AMD: Radeon RX系列，驱动版本 > 21.x
+  - Intel: 第6代及以上核显，最新驱动
+
+### 6.5 环境隔离建议
+
+为避免依赖冲突，建议使用虚拟环境进行开发和部署：
+
+```bash
+# 创建虚拟环境
+python -m venv venv
+
+# 激活虚拟环境
+# Windows
+venv\Scripts\activate
+# Linux/macOS
+source venv/bin/activate
+
+# 安装依赖
+pip install -r requirements.txt
 ```
 
-### 6.2 音频处理接口
+### 6.6 依赖升级策略
 
-#### 混合多个音频
-```python
-"""
-混合多个音频文件
+- **核心依赖**: 建议锁定版本，以确保稳定性。升级前需要进行充分测试。
+- **辅助依赖**: 可以更灵活地更新，但仍建议锁定主版本号。
+- **可选依赖**: 可以跟随最新版本。
 
-参数:
-    audio_paths (List[str]): 音频文件路径列表
-    volumes (List[float]): 对应的音量调整因子列表
-    
-返回:
-    str: 混合后的音频文件路径
-"""
-mixed_audio = audio_processor.mix_audio(audio_paths, volumes)
-```
+### 6.7 开发环境搭建指南
 
-#### 添加背景音乐
-```python
-"""
-添加背景音乐到人声音频
-
-参数:
-    audio_path (str): 人声音频路径
-    bgm_path (str): 背景音乐路径
-    voice_volume (float): 人声音量调整因子
-    bgm_volume (float): 背景音乐音量调整因子
-    
-返回:
-    str: 添加背景音乐后的音频文件路径
-"""
-output_audio = audio_processor.add_bgm(audio_path, bgm_path, voice_volume, bgm_volume)
-```
-
-### 6.3 转场特效接口
-
-#### 应用转场效果
-```python
-"""
-应用转场效果到两个视频片段
-
-参数:
-    clip1 (VideoClip): 第一个视频片段
-    clip2 (VideoClip): 第二个视频片段
-    duration (float): 转场时长(秒)
-    
-返回:
-    VideoClip: 应用效果后的视频片段
-"""
-result_clip = transition_effect.apply(clip1, clip2, duration)
-```
-
-#### 获取可用转场效果
-```python
-"""
-获取所有可用的转场效果名称
-
-返回:
-    List[str]: 转场效果名称列表
-"""
-effects = transitions.get_available_effects()
-```
-
-### 6.4 用户界面接口
-
-#### 添加素材文件夹
-```python
-"""
-添加素材文件夹
-
-参数:
-    folder_path (str): 文件夹路径
-    
-返回:
-    bool: 是否成功添加
-"""
-success = main_window.add_material_folder(folder_path)
-```
-
-#### 开始处理视频
-```python
-"""
-开始处理视频
-"""
-main_window.process_videos()
-```
-
-#### 处理完成回调
-```python
-"""
-处理完成回调
-
-参数:
-    success (bool): 是否成功
-    count (int): 处理视频数量
-    output_dir (str): 输出目录
-    total_time (str): 总用时
-"""
-main_window.on_compose_completed(success, count, output_dir, total_time)
-```
+1. 克隆代码库
+2. 创建Python虚拟环境
+3. 安装所有依赖
+4. 安装并配置FFmpeg
+5. 验证环境:
+   ```bash
+   python -c "import PyQt5; import moviepy; import numpy; print('环境验证成功')"
+   ```
+6. 启动应用:
+   ```bash
+   python main.py
+   ```
 
 ## 7. 技术栈总结
 

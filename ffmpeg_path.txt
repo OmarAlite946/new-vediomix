@@ -1,1 +1,1 @@
-ffmpeg_compat\ffmpeg.exe
+D:\新混剪工具\ffmpeg_compat\ffmpeg.exe

@@ -83,23 +83,67 @@ class UserSettings:
         Args:
             instance_id: 实例ID，用于区分不同的设置文件
         """
+        # 初始化内部设置变量
+        self._settings = DEFAULT_SETTINGS.copy()
+        
+        # 设置实例标识符
+        self._instance_id = None  # 先初始化为None，避免在instance_id setter中调用load_settings时出现问题
         self.instance_id = instance_id or str(uuid.uuid4())[:8]
+        
+        # 设置文件路径
         self.settings_dir = Path(os.path.expanduser("~")) / "VideoMixTool"
         self.settings_file = self.settings_dir / "user_settings.json"
-        # 初始化为默认设置的副本，而不是空字典
-        self.settings = DEFAULT_SETTINGS.copy()
         
         # 确保设置目录存在
         self.settings_dir.mkdir(parents=True, exist_ok=True)
         
         # 加载设置
-        self.load_settings()
+        try:
+            self.load_settings()
+        except Exception as e:
+            logger.error(f"加载设置时出错: {e}，使用默认设置")
+            self._settings = DEFAULT_SETTINGS.copy()
         
         # 记录实例
         UserSettings._instances[self.instance_id] = self
         
         # 记录标识符
         logger.debug(f"创建新的用户设置实例: {self.instance_id}")
+    
+    @property
+    def settings(self):
+        """获取设置字典的属性getter，确保总是有值"""
+        if not hasattr(self, '_settings') or self._settings is None:
+            logger.warning("settings属性不存在或为None，重新创建默认设置")
+            self._settings = DEFAULT_SETTINGS.copy()
+        return self._settings
+    
+    @settings.setter
+    def settings(self, value):
+        """设置字典的属性setter"""
+        if value is None:
+            logger.warning("尝试将settings设置为None，使用默认值")
+            self._settings = DEFAULT_SETTINGS.copy()
+        else:
+            self._settings = value
+    
+    def __getattr__(self, name):
+        """
+        确保即使settings属性丢失也能正常工作
+        
+        Args:
+            name: 属性名
+            
+        Returns:
+            对应的属性值
+        """
+        # 如果尝试访问settings属性但不存在，则重新创建
+        if name == "settings":
+            logger.warning("通过__getattr__访问settings属性，重新创建默认设置")
+            self._settings = DEFAULT_SETTINGS.copy()
+            return self._settings
+        # 对于其他属性，抛出正常的AttributeError
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     
     @property
     def instance_id(self):
@@ -150,6 +194,10 @@ class UserSettings:
             bool: 加载是否成功
         """
         try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                self._settings = DEFAULT_SETTINGS.copy()
+                
             settings_file = self._get_settings_file()
             
             # 首先加载全局设置作为基础
@@ -159,8 +207,8 @@ class UserSettings:
                         global_settings = json.load(f)
                         # 更新设置，保留默认值
                         for key, value in global_settings.items():
-                            if key in self.settings:
-                                self.settings[key] = value
+                            if key in self._settings:
+                                self._settings[key] = value
                 except Exception as e:
                     logger.warning(f"加载全局设置作为基础时出错: {e}")
             
@@ -176,8 +224,8 @@ class UserSettings:
                     
                     # 更新设置，保留默认值
                     for key, value in loaded_settings.items():
-                        if key in self.settings:
-                            self.settings[key] = value
+                        if key in self._settings:
+                            self._settings[key] = value
                 logger.info(f"已从 {settings_file} 加载用户设置，实例ID: {self.instance_id}")
                 return True
             else:
@@ -191,6 +239,9 @@ class UserSettings:
                 return True
         except Exception as e:
             logger.error(f"加载用户设置出错: {e}")
+            # 确保settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                self._settings = DEFAULT_SETTINGS.copy()
             # 创建备份以防止损坏
             self._save_settings_backup()
             return False
@@ -198,6 +249,10 @@ class UserSettings:
     def _save_settings_backup(self):
         """保存设置备份"""
         try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                self._settings = DEFAULT_SETTINGS.copy()
+                
             if not CONFIG_DIR.exists():
                 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
             
@@ -205,7 +260,7 @@ class UserSettings:
             backup_file = settings_file.with_suffix(f".bak.{uuid.uuid4().hex[:8]}")
             
             with open(backup_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+                json.dump(self._settings, f, ensure_ascii=False, indent=2)
             
             logger.info(f"已保存用户设置备份到 {backup_file}")
             
@@ -233,6 +288,11 @@ class UserSettings:
             bool: 保存是否成功
         """
         try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                logger.warning("保存设置时_settings不存在，创建默认设置")
+                self._settings = DEFAULT_SETTINGS.copy()
+                
             # 确保目录存在
             if not CONFIG_DIR.exists():
                 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -242,7 +302,7 @@ class UserSettings:
             # 先保存到临时文件，然后重命名，避免写入过程中文件损坏
             temp_file = settings_file.with_suffix(".tmp")
             with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+                json.dump(self._settings, f, ensure_ascii=False, indent=2)
             
             # 如果已存在设置文件，先创建备份
             if settings_file.exists():
@@ -271,58 +331,77 @@ class UserSettings:
     
     def get_setting(self, key: str, default: Any = None) -> Any:
         """
-        获取指定键的设置值
+        获取设置值
         
         Args:
             key: 设置键名
-            default: 如果键不存在时返回的默认值
+            default: 默认值
             
         Returns:
-            Any: 设置值
+            设置值
         """
-        return self.settings.get(key, default)
+        try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                logger.warning("获取设置时发现_settings不存在，创建默认设置")
+                self._settings = DEFAULT_SETTINGS.copy()
+                
+            return self._settings.get(key, default)
+        except Exception as e:
+            logger.error(f"获取设置出错: {key}, {e}")
+            return default
     
     def set_setting(self, key: str, value: Any) -> bool:
         """
-        设置指定键的值
+        设置配置值
         
         Args:
             key: 设置键名
             value: 设置值
             
         Returns:
-            bool: 设置是否成功
+            bool: 是否设置成功
         """
-        if key not in self.settings and key not in DEFAULT_SETTINGS:
-            logger.warning(f"尝试设置未知键: {key}，实例ID: {self.instance_id}")
-        
-        # 记录值变化
-        if key in self.settings and self.settings[key] != value:
-            logger.debug(f"设置 {key} 从 {self.settings.get(key)} 变更为 {value}, 实例ID: {self.instance_id}")
-        
-        self.settings[key] = value
-        return self._save_settings()
+        try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                logger.warning("设置配置时发现_settings不存在，创建默认设置")
+                self._settings = DEFAULT_SETTINGS.copy()
+                
+            # 设置值
+            self._settings[key] = value
+            
+            # 保存设置
+            return self._save_settings()
+        except Exception as e:
+            logger.error(f"设置配置值失败: {key}={value}, {e}")
+            return False
     
     def set_multiple_settings(self, settings_dict: Dict[str, Any]) -> bool:
         """
-        批量设置多个键值
+        设置多个配置项
         
         Args:
-            settings_dict: 包含多个键值对的字典
+            settings_dict: 包含多个设置的字典
             
         Returns:
-            bool: 设置是否成功
+            bool: 是否全部设置成功
         """
-        changes = []
-        for key, value in settings_dict.items():
-            if key in self.settings and self.settings[key] != value:
-                changes.append(f"{key}: {self.settings.get(key)} -> {value}")
-            self.settings[key] = value
-        
-        if changes:
-            logger.debug(f"批量更新设置，实例ID: {self.instance_id}, 变更: {', '.join(changes)}")
-        
-        return self._save_settings()
+        try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                logger.warning("批量设置配置时发现_settings不存在，创建默认设置")
+                self._settings = DEFAULT_SETTINGS.copy()
+                
+            # 更新设置
+            for key, value in settings_dict.items():
+                self._settings[key] = value
+            
+            # 保存设置
+            return self._save_settings()
+        except Exception as e:
+            logger.error(f"批量设置配置失败: {e}")
+            return False
     
     def get_all_settings(self) -> Dict[str, Any]:
         """
@@ -331,7 +410,12 @@ class UserSettings:
         Returns:
             Dict[str, Any]: 所有设置的字典
         """
-        return self.settings.copy()
+        # 确保_settings属性存在
+        if not hasattr(self, '_settings') or self._settings is None:
+            logger.warning("获取所有设置时发现_settings不存在，创建默认设置")
+            self._settings = DEFAULT_SETTINGS.copy()
+            
+        return self._settings.copy()
     
     def reset_to_defaults(self) -> bool:
         """
@@ -340,24 +424,45 @@ class UserSettings:
         Returns:
             bool: 重置是否成功
         """
-        self.settings = DEFAULT_SETTINGS.copy()
+        self._settings = DEFAULT_SETTINGS.copy()
         logger.info(f"重置实例 {self.instance_id} 的设置为默认值")
         return self._save_settings()
     
     def load_settings(self) -> bool:
         """
-        加载设置
+        从文件加载设置
         
         Returns:
             bool: 加载是否成功
         """
-        return self._load_settings()
+        try:
+            # 确保_settings存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                self._settings = DEFAULT_SETTINGS.copy()
+                
+            # 调用内部实现方法
+            return self._load_settings()
+        except Exception as e:
+            logger.error(f"调用load_settings方法出错: {e}")
+            # 确保至少有默认设置
+            self._settings = DEFAULT_SETTINGS.copy()
+            return False
     
     def save_settings(self) -> bool:
         """
-        保存设置
+        保存设置到文件
         
         Returns:
             bool: 保存是否成功
         """
-        return self._save_settings() 
+        try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                logger.warning("保存设置时_settings不存在，创建默认设置")
+                self._settings = DEFAULT_SETTINGS.copy()
+                
+            # 调用内部实现方法
+            return self._save_settings()
+        except Exception as e:
+            logger.error(f"调用save_settings方法出错: {e}")
+            return False 

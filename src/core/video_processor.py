@@ -29,7 +29,7 @@ if str(project_root) not in sys.path:
 try:
     import cv2
     import numpy as np
-    from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, vfx, CompositeAudioClip
+    from moviepy.editor import VideoFileClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips, vfx, CompositeAudioClip
 except ImportError as e:
     print(f"正在安装必要的依赖...")
     try:
@@ -37,15 +37,15 @@ except ImportError as e:
         pip.main(["install", "moviepy", "opencv-python", "numpy"])
         import cv2
         import numpy as np
-        from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, vfx, CompositeAudioClip
+        from moviepy.editor import VideoFileClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips, vfx, CompositeAudioClip
     except Exception as install_error:
         print(f"安装依赖失败: {install_error}")
         print("请手动安装依赖：")
         print("pip install moviepy opencv-python numpy")
         sys.exit(1)
 
-from utils.logger import get_logger
-from utils.cache_config import CacheConfig
+from src.utils.logger import get_logger
+from src.utils.cache_config import CacheConfig
 
 logger = get_logger()
 
@@ -595,88 +595,157 @@ class VideoProcessor:
             folder_key: 素材数据字典中的键
             material_data: 素材数据字典
         """
-        # 查找视频文件夹
-        video_folder = os.path.join(folder_path, "视频")
-        if os.path.exists(video_folder) and os.path.isdir(video_folder):
-            # 获取所有视频文件
-            video_files = []
-            for root, _, files in os.walk(video_folder):
-                for file in files:
-                    if file.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".wmv")):
-                        video_files.append(os.path.join(root, file))
-            
-            # 分析视频时长
-            video_info_list = []
-            for video_file in video_files:
-                try:
-                    # 使用OpenCV获取视频信息
-                    cap = cv2.VideoCapture(video_file)
-                    if not cap.isOpened():
-                        logger.warning(f"无法打开视频: {video_file}")
-                        continue
-                    
-                    # 获取视频帧率和总帧数
-                    fps = cap.get(cv2.CAP_PROP_FPS)
-                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    
-                    # 计算视频时长(秒)
-                    duration = frame_count / fps if fps > 0 else 0
-                    
-                    # 获取分辨率
-                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    
-                    cap.release()
-                    
-                    if duration > 0:
-                        video_info = {
-                            "path": video_file,
-                            "duration": duration,
-                            "fps": fps,
-                            "width": width,
-                            "height": height
-                        }
-                        video_info_list.append(video_info)
-                except Exception as e:
-                    logger.warning(f"分析视频失败: {video_file}, 错误: {str(e)}")
-            
-            material_data[folder_key]["videos"] = video_info_list
-            logger.info(f"文件夹 '{folder_key}' 中找到 {len(video_info_list)} 个视频")
-        else:
-            logger.warning(f"文件夹 '{folder_key}' 中找不到视频文件夹")
+        # 导入解析快捷方式的函数
+        from src.utils.file_utils import resolve_shortcut
         
-        # 查找配音文件夹
+        # 查找视频文件夹，包括处理快捷方式
+        video_folder = os.path.join(folder_path, "视频")
+        video_folder_paths = [video_folder]
+        
+        # 检查视频文件夹是否存在，如果不存在则尝试查找快捷方式
+        if not os.path.exists(video_folder) or not os.path.isdir(video_folder):
+            logger.debug(f"常规视频文件夹不存在，尝试寻找快捷方式: {video_folder}")
+            
+            # 检查所有可能的命名格式
+            video_shortcut_candidates = [
+                os.path.join(folder_path, "视频 - 快捷方式.lnk"),
+                os.path.join(folder_path, "视频.lnk"),
+                os.path.join(folder_path, "视频快捷方式.lnk")
+            ]
+            
+            # 添加更多可能的快捷方式路径
+            for item in os.listdir(folder_path) if os.path.exists(folder_path) and os.path.isdir(folder_path) else []:
+                if item.lower().endswith('.lnk') and "视频" in item:
+                    shortcut_path = os.path.join(folder_path, item)
+                    if shortcut_path not in video_shortcut_candidates:
+                        video_shortcut_candidates.append(shortcut_path)
+            
+            # 检查所有候选快捷方式
+            for shortcut_path in video_shortcut_candidates:
+                if os.path.exists(shortcut_path):
+                    logger.info(f"发现视频文件夹快捷方式: {shortcut_path}")
+                    target_path = resolve_shortcut(shortcut_path)
+                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                        video_folder_paths = [target_path]
+                        break
+        
+        # 处理视频文件夹
+        video_info_list = []
+        for video_folder in video_folder_paths:
+            if os.path.exists(video_folder) and os.path.isdir(video_folder):
+                # 获取所有视频文件
+                video_files = []
+                for root, _, files in os.walk(video_folder):
+                    for file in files:
+                        if file.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".wmv")):
+                            video_files.append(os.path.join(root, file))
+                
+                logger.info(f"在文件夹 '{video_folder}' 中找到 {len(video_files)} 个视频文件")
+                
+                # 分析视频时长
+                for video_file in video_files:
+                    try:
+                        # 使用OpenCV获取视频信息
+                        cap = cv2.VideoCapture(video_file)
+                        if not cap.isOpened():
+                            logger.warning(f"无法打开视频: {video_file}")
+                            continue
+                        
+                        # 获取视频帧率和总帧数
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        
+                        # 计算视频时长(秒)
+                        duration = frame_count / fps if fps > 0 else 0
+                        
+                        # 获取分辨率
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        
+                        cap.release()
+                        
+                        if duration > 0:
+                            video_info = {
+                                "path": video_file,
+                                "duration": duration,
+                                "fps": fps,
+                                "width": width,
+                                "height": height
+                            }
+                            video_info_list.append(video_info)
+                    except Exception as e:
+                        logger.warning(f"分析视频失败: {video_file}, 错误: {str(e)}")
+            
+        # 保存视频列表
+        material_data[folder_key]["videos"] = video_info_list
+        logger.info(f"文件夹 '{folder_key}' 中找到 {len(video_info_list)} 个有效视频")
+        
+        # 查找配音文件夹，包括处理快捷方式
         audio_folder = os.path.join(folder_path, "配音")
-        if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
-            # 获取所有音频文件
-            audio_files = []
-            for root, _, files in os.walk(audio_folder):
-                for file in files:
-                    if file.lower().endswith((".mp3", ".wav", ".aac", ".ogg", ".flac")):
-                        audio_files.append(os.path.join(root, file))
+        audio_folder_paths = [audio_folder]
+        
+        # 检查配音文件夹是否存在，如果不存在则尝试查找快捷方式
+        if not os.path.exists(audio_folder) or not os.path.isdir(audio_folder):
+            logger.debug(f"常规配音文件夹不存在，尝试寻找快捷方式: {audio_folder}")
             
-            # 分析音频时长
-            audio_info_list = []
-            for audio_file in audio_files:
-                try:
-                    # 使用MoviePy获取音频信息
-                    audio_clip = AudioFileClip(audio_file)
-                    duration = audio_clip.duration
-                    audio_clip.close()
-                    
-                    if duration > 0:
-                        audio_info = {
-                            "path": audio_file,
-                            "duration": duration
-                        }
-                        audio_info_list.append(audio_info)
-                except Exception as e:
-                    logger.warning(f"分析音频失败: {audio_file}, 错误: {str(e)}")
+            # 检查所有可能的命名格式
+            audio_shortcut_candidates = [
+                os.path.join(folder_path, "配音 - 快捷方式.lnk"),
+                os.path.join(folder_path, "配音.lnk"),
+                os.path.join(folder_path, "配音快捷方式.lnk")
+            ]
             
-            material_data[folder_key]["audios"] = audio_info_list
-            logger.info(f"文件夹 '{folder_key}' 中找到 {len(audio_info_list)} 个配音")
-        else:
-            logger.warning(f"文件夹 '{folder_key}' 中找不到配音文件夹")
+            # 添加更多可能的快捷方式路径
+            for item in os.listdir(folder_path) if os.path.exists(folder_path) and os.path.isdir(folder_path) else []:
+                if item.lower().endswith('.lnk') and "配音" in item:
+                    shortcut_path = os.path.join(folder_path, item)
+                    if shortcut_path not in audio_shortcut_candidates:
+                        audio_shortcut_candidates.append(shortcut_path)
+            
+            # 检查所有候选快捷方式
+            for shortcut_path in audio_shortcut_candidates:
+                if os.path.exists(shortcut_path):
+                    logger.info(f"发现配音文件夹快捷方式: {shortcut_path}")
+                    target_path = resolve_shortcut(shortcut_path)
+                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                        audio_folder_paths = [target_path]
+                        break
+        
+        # 处理配音文件夹
+        audio_info_list = []
+        for audio_folder in audio_folder_paths:
+            if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
+                # 获取所有音频文件
+                audio_files = []
+                for root, _, files in os.walk(audio_folder):
+                    for file in files:
+                        if file.lower().endswith((".mp3", ".wav", ".aac", ".ogg", ".flac")):
+                            audio_files.append(os.path.join(root, file))
+                
+                logger.info(f"在文件夹 '{audio_folder}' 中找到 {len(audio_files)} 个音频文件")
+                
+                # 分析音频时长
+                for audio_file in audio_files:
+                    try:
+                        # 使用MoviePy获取音频信息
+                        audio_clip = AudioFileClip(audio_file)
+                        duration = audio_clip.duration
+                        audio_clip.close()
+                        
+                        if duration > 0:
+                            audio_info = {
+                                "path": audio_file,
+                                "duration": duration
+                            }
+                            audio_info_list.append(audio_info)
+                    except Exception as e:
+                        logger.warning(f"分析音频失败: {audio_file}, 错误: {str(e)}")
+        
+        # 保存音频列表
+        material_data[folder_key]["audios"] = audio_info_list
+        logger.info(f"文件夹 '{folder_key}' 中找到 {len(audio_info_list)} 个有效配音")
     
     def _process_single_video(self, 
                               material_data: Dict[str, Dict[str, Any]], 

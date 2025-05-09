@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 
 # 添加项目根目录到 Python 路径
-project_root = Path(__file__).resolve().parent
+project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
@@ -19,6 +19,11 @@ if str(project_root) not in sys.path:
 src_dir = project_root / "src"
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
+
+# 打印路径信息，用于调试
+print(f"项目根目录: {project_root}")
+print(f"src目录: {src_dir}")
+print(f"Python路径: {sys.path}")
 
 def install_dependencies():
     """安装必要的依赖"""
