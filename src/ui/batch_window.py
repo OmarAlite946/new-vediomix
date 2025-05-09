@@ -294,6 +294,22 @@ class BatchWindow(QMainWindow):
         self.btn_select_all = QPushButton("全选")
         self.btn_select_all.clicked.connect(self._on_select_all)
         
+        # 添加批量刷新素材数量按钮
+        self.btn_refresh_counts = QPushButton("批量刷新素材数量")
+        self.btn_refresh_counts.setStyleSheet("""
+            QPushButton {
+                background-color: #5C85D6;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #4A6FB8;
+            }
+        """)
+        self.btn_refresh_counts.clicked.connect(self._on_refresh_all_counts)
+        
         # 开始批量处理
         self.btn_start_batch = QPushButton("开始批量处理")
         self.btn_start_batch.setStyleSheet("""
@@ -330,6 +346,7 @@ class BatchWindow(QMainWindow):
         self.btn_stop_batch.clicked.connect(self._on_stop_batch)
         
         batch_buttons.addWidget(self.btn_select_all)
+        batch_buttons.addWidget(self.btn_refresh_counts)
         batch_buttons.addStretch(1)
         batch_buttons.addWidget(self.btn_start_batch)
         batch_buttons.addWidget(self.btn_stop_batch)
@@ -680,29 +697,76 @@ class BatchWindow(QMainWindow):
             return f"{hours}时{minutes}分{seconds:.1f}秒"
     
     def _on_select_all(self):
-        """全选/取消全选处理"""
-        # 检查当前状态
-        current_state = True  # 默认假设全部已选
-        
-        for row in range(self.tasks_table.rowCount()):
-            checkbox_container = self.tasks_table.cellWidget(row, 0)
-            if checkbox_container:
-                checkbox = checkbox_container.findChild(QCheckBox)
-                if checkbox and not checkbox.isChecked():
-                    current_state = False
-                    break
-        
-        # 切换状态
-        new_state = not current_state
-        for row in range(self.tasks_table.rowCount()):
-            checkbox_container = self.tasks_table.cellWidget(row, 0)
-            if checkbox_container:
-                checkbox = checkbox_container.findChild(QCheckBox)
-                if checkbox:
+        """全选或取消全选"""
+        # 获取当前是否全选
+        if self.tasks_table.rowCount() == 0:
+            return
+            
+        # 检查第一个复选框的状态，并据此切换所有复选框
+        first_checkbox = self.tasks_table.cellWidget(0, 0)
+        if isinstance(first_checkbox, QCheckBox):
+            new_state = not first_checkbox.isChecked()
+            
+            # 更新所有复选框
+            for row in range(self.tasks_table.rowCount()):
+                checkbox = self.tasks_table.cellWidget(row, 0)
+                if isinstance(checkbox, QCheckBox):
                     checkbox.setChecked(new_state)
+            
+            # 更新按钮文本
+            self.btn_select_all.setText("取消全选" if new_state else "全选")
+    
+    def _on_refresh_all_counts(self):
+        """批量刷新所有模板的素材数量"""
+        if not self.tabs:
+            QMessageBox.information(self, "刷新素材数量", "没有打开的模板，无法刷新")
+            return
         
-        # 更新按钮文本
-        self.btn_select_all.setText("取消全选" if new_state else "全选")
+        success_count = 0
+        failed_tabs = []
+        
+        # 设置等待光标
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.status_label.setText("正在刷新素材数量...")
+        
+        try:
+            for i, tab in enumerate(self.tabs):
+                if "window" in tab and tab["window"]:
+                    window = tab["window"]
+                    tab_name = tab["name"]
+                    
+                    try:
+                        # 检查是否有_update_media_counts方法
+                        if hasattr(window, "_update_media_counts") and callable(window._update_media_counts):
+                            # 调用模板的_update_media_counts方法
+                            window._update_media_counts()
+                            success_count += 1
+                            logger.info(f"已刷新模板 '{tab_name}' 的素材数量")
+                        else:
+                            logger.warning(f"模板 '{tab_name}' 不支持刷新素材数量")
+                            failed_tabs.append(f"{tab_name} (不支持刷新)")
+                    except Exception as e:
+                        logger.error(f"刷新模板 '{tab_name}' 素材数量时出错: {str(e)}")
+                        failed_tabs.append(f"{tab_name} (错误: {str(e)})")
+            
+            # 更新完成后显示结果
+            if success_count > 0:
+                result_message = f"已成功刷新 {success_count} 个模板的素材数量"
+                if failed_tabs:
+                    result_message += f"\n\n以下模板刷新失败:\n" + "\n".join(failed_tabs)
+                
+                QMessageBox.information(self, "刷新完成", result_message)
+                self.status_label.setText(f"已刷新 {success_count} 个模板的素材数量")
+            else:
+                error_message = "所有模板刷新失败"
+                if failed_tabs:
+                    error_message += f"\n\n详细信息:\n" + "\n".join(failed_tabs)
+                
+                QMessageBox.warning(self, "刷新失败", error_message)
+                self.status_label.setText("刷新素材数量失败")
+        finally:
+            # 恢复光标
+            QApplication.restoreOverrideCursor()
     
     def _on_start_batch(self):
         """开始批量处理"""

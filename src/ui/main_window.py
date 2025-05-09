@@ -986,7 +986,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
     
     @pyqtSlot()
     def on_refresh_material(self):
-        """刷新素材列表"""
+        """刷新素材列表并更新素材数量"""
         # 获取当前选中的文件夹路径
         last_import_folder = self.user_settings.get_setting("import_folder", "")
         
@@ -994,22 +994,35 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             QMessageBox.warning(self, "刷新素材", "请先选择有效的素材根目录")
             return
             
-        # 清空表格
-        self.video_table.setRowCount(0)
+        # 设置鼠标等待状态
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.status_label.setText("正在刷新素材列表和数量...")
         
-        # 刷新导入
-        self._import_material_folder(last_import_folder)
-        
-        # 保存设置
-        self._save_user_settings()
-        
-        # 显示刷新结果
-        imported_rows = self.video_table.rowCount()
-        QMessageBox.information(
-            self, 
-            "刷新素材", 
-            f"素材列表已刷新，当前有 {imported_rows} 个素材文件夹"
-        )
+        try:
+            # 清空表格
+            self.video_table.setRowCount(0)
+            
+            # 刷新导入
+            self._import_material_folder(last_import_folder)
+            
+            # 保存设置
+            self._save_user_settings()
+            
+            # 刷新素材数量
+            self._update_media_counts()
+            
+            # 显示刷新结果
+            imported_rows = self.video_table.rowCount()
+            QMessageBox.information(
+                self, 
+                "刷新素材", 
+                f"素材列表已刷新，当前有 {imported_rows} 个素材文件夹\n已更新所有素材的视频和配音数量"
+            )
+            
+            self.status_label.setText("素材和数量刷新完成")
+        finally:
+            # 恢复鼠标指针
+            QApplication.restoreOverrideCursor()
     
     @pyqtSlot()
     def on_clear_material(self):
@@ -1025,6 +1038,23 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 # 保存设置变更
                 self._save_user_settings()
                 logger.info("素材列表已清空")
+    
+    @pyqtSlot()
+    def on_update_media_counts(self):
+        """批量刷新素材数量"""
+        if self.video_table.rowCount() == 0:
+            QMessageBox.information(self, "刷新数量", "素材列表为空，没有可刷新的素材")
+            return
+            
+        # 执行更新
+        self._update_media_counts()
+        
+        # 显示完成消息
+        QMessageBox.information(
+            self, 
+            "刷新完成", 
+            "已更新所有素材的视频和配音数量"
+        )
     
     @pyqtSlot()
     def on_browse_save_dir(self):
@@ -3601,6 +3631,20 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         selected_rows = self.video_table.selectionModel().selectedRows()
         
         if not selected_rows:
+            # 如果没有选中行，创建一个全局菜单
+            context_menu = QMenu(self)
+            
+            # 添加批量刷新素材数量选项
+            refresh_counts_action = QAction("批量刷新素材数量", self)
+            context_menu.addAction(refresh_counts_action)
+            
+            # 显示菜单并获取选择结果
+            action = context_menu.exec_(self.video_table.viewport().mapToGlobal(position))
+            
+            # 处理选择结果
+            if action == refresh_counts_action:
+                self.on_update_media_counts()
+            
             return
             
         # 仅处理单行选择
@@ -3636,6 +3680,14 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 添加查看文件夹选项
         open_folder_action = QAction("打开文件夹", self)
         context_menu.addAction(open_folder_action)
+        
+        # 添加刷新素材数量选项 - 为单个行和全局菜单都添加
+        refresh_count_action = QAction("刷新此素材数量", self)
+        context_menu.addAction(refresh_count_action)
+        
+        # 添加批量刷新素材数量选项
+        refresh_all_counts_action = QAction("刷新所有素材", self)
+        context_menu.addAction(refresh_all_counts_action)
         
         # 添加重置为单视频模式选项
         reset_action = QAction("重置为单视频模式", self)
@@ -3743,6 +3795,57 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 
                 # 保存用户设置
                 self._save_user_settings()
+        
+        elif action == refresh_count_action:
+            # 刷新单个素材的数量
+            try:
+                folder_path = self.video_table.item(row, 2).text()
+                if not folder_path or not os.path.exists(folder_path):
+                    QMessageBox.warning(self, "刷新失败", "素材路径不存在")
+                    return
+                    
+                # 设置鼠标等待状态
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                
+                try:
+                    # 查找视频文件夹
+                    video_folder = os.path.join(folder_path, "视频")
+                    video_count = 0
+                    if os.path.exists(video_folder) and os.path.isdir(video_folder):
+                        try:
+                            from src.utils.file_utils import list_media_files
+                            media = list_media_files(video_folder, recursive=True)
+                            video_count = len(media['videos'])
+                        except Exception as e:
+                            logger.error(f"扫描视频文件夹失败: {str(e)}")
+                    
+                    # 查找配音文件夹
+                    audio_folder = os.path.join(folder_path, "配音")
+                    audio_count = 0
+                    if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
+                        try:
+                            from src.utils.file_utils import list_media_files
+                            media = list_media_files(audio_folder, recursive=True)
+                            audio_count = len(media['audios'])
+                        except Exception as e:
+                            logger.error(f"扫描音频文件夹失败: {str(e)}")
+                    
+                    # 更新表格项
+                    self.video_table.setItem(row, 3, QTableWidgetItem(str(video_count)))
+                    self.video_table.setItem(row, 4, QTableWidgetItem(str(audio_count)))
+                    
+                    logger.info(f"已更新素材 '{folder_name}' 的媒体数量：视频 {video_count}，配音 {audio_count}")
+                    self.status_label.setText(f"已更新 '{folder_name}' 的媒体数量")
+                finally:
+                    # 恢复鼠标指针
+                    QApplication.restoreOverrideCursor()
+            except Exception as e:
+                logger.error(f"刷新素材数量时出错: {str(e)}")
+                QMessageBox.warning(self, "刷新错误", f"刷新素材数量时出错: {str(e)}")
+        
+        elif action == refresh_all_counts_action:
+            # 刷新所有素材的数量
+            self.on_refresh_material()
 
     def show_extract_mode_guide(self):
         """显示抽取模式说明"""
@@ -3862,6 +3965,59 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     
                     # 记录日志
                     logger.info(f"将表格项转换为抽取模式项: {folder_path}")
+
+    # 添加新的方法来更新媒体计数
+    def _update_media_counts(self):
+        """更新素材表格中每一行的视频和配音数量"""
+        from src.utils.file_utils import list_media_files, resolve_shortcut
+        logger.info("正在更新素材数量...")
+        
+        # 设置鼠标等待状态
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        try:
+            for row in range(self.video_table.rowCount()):
+                folder_path = self.video_table.item(row, 2).text()
+                if not folder_path or not os.path.exists(folder_path):
+                    continue
+                    
+                # 查找视频文件夹
+                video_folder = os.path.join(folder_path, "视频")
+                video_count = 0
+                if os.path.exists(video_folder) and os.path.isdir(video_folder):
+                    try:
+                        media = list_media_files(video_folder, recursive=True)
+                        video_count = len(media['videos'])
+                    except Exception as e:
+                        logger.error(f"扫描视频文件夹失败: {str(e)}")
+                
+                # 查找配音文件夹
+                audio_folder = os.path.join(folder_path, "配音")
+                audio_count = 0
+                if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
+                    try:
+                        media = list_media_files(audio_folder, recursive=True)
+                        audio_count = len(media['audios'])
+                    except Exception as e:
+                        logger.error(f"扫描音频文件夹失败: {str(e)}")
+                
+                # 更新表格项
+                self.video_table.setItem(row, 3, QTableWidgetItem(str(video_count)))
+                self.video_table.setItem(row, 4, QTableWidgetItem(str(audio_count)))
+            
+            logger.info("素材数量更新完成")
+        except Exception as e:
+            logger.error(f"更新素材数量时出错: {str(e)}")
+        finally:
+            # 恢复鼠标指针
+            QApplication.restoreOverrideCursor()
+
+    # 添加窗口显示事件处理
+    def showEvent(self, event):
+        """窗口显示事件，自动更新媒体数量"""
+        super().showEvent(event)
+        # 延迟一点时间再更新，确保界面已经显示完成
+        QtCore.QTimer.singleShot(100, self._update_media_counts)
 
 class WatermarkPreview(QFrame):
     """水印位置预览控件，允许用户通过拖动调整水印位置"""
