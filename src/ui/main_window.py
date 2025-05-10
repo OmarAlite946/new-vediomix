@@ -3200,6 +3200,17 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         try:
             # 遍历根目录下的所有子文件夹
             for item in os.listdir(root_dir):
+                # 确保文件名是正确的字符串格式
+                if isinstance(item, bytes):
+                    try:
+                        item = item.decode('utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            item = item.decode('gbk')
+                        except UnicodeDecodeError:
+                            logger.error(f"无法解码文件名: {item}")
+                            continue
+                
                 item_path = os.path.join(root_dir, item)
                 
                 actual_path = item_path
@@ -3259,16 +3270,30 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     
                     # 如果仍未找到，则尝试搜索包含"视频"的所有.lnk文件
                     if not has_video_folder:
-                        for item in os.listdir(actual_path):
-                            if item.lower().endswith('.lnk') and "视频" in item:
-                                shortcut_path = os.path.join(actual_path, item)
-                                logger.info(f"发现可能的视频快捷方式: {shortcut_path}")
-                                video_target = resolve_shortcut(shortcut_path)
-                                if video_target and os.path.isdir(video_target):
-                                    video_path = video_target
-                                    has_video_folder = True
-                                    logger.info(f"检测到视频快捷方式: {shortcut_path} -> {video_path}")
-                                    break
+                        try:
+                            for item in os.listdir(actual_path):
+                                # 确保文件名是正确的字符串格式
+                                if isinstance(item, bytes):
+                                    try:
+                                        item = item.decode('utf-8')
+                                    except UnicodeDecodeError:
+                                        try:
+                                            item = item.decode('gbk')
+                                        except UnicodeDecodeError:
+                                            logger.error(f"无法解码文件名: {item}")
+                                            continue
+                                
+                                if item.lower().endswith('.lnk') and "视频" in item:
+                                    shortcut_path = os.path.join(actual_path, item)
+                                    logger.info(f"发现可能的视频快捷方式: {shortcut_path}")
+                                    video_target = resolve_shortcut(shortcut_path)
+                                    if video_target and os.path.isdir(video_target):
+                                        video_path = video_target
+                                        has_video_folder = True
+                                        logger.info(f"检测到视频快捷方式: {shortcut_path} -> {video_path}")
+                                        break
+                        except Exception as e:
+                            logger.error(f"搜索视频快捷方式时出错: {str(e)}")
                 
                 # 检查"配音"子文件夹是否是快捷方式（检查多种可能的命名格式）
                 if not has_audio_folder:
@@ -3292,16 +3317,30 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     
                     # 如果仍未找到，则尝试搜索包含"配音"的所有.lnk文件
                     if not has_audio_folder:
-                        for item in os.listdir(actual_path):
-                            if item.lower().endswith('.lnk') and "配音" in item:
-                                shortcut_path = os.path.join(actual_path, item)
-                                logger.info(f"发现可能的配音快捷方式: {shortcut_path}")
-                                audio_target = resolve_shortcut(shortcut_path)
-                                if audio_target and os.path.isdir(audio_target):
-                                    audio_path = audio_target
-                                    has_audio_folder = True
-                                    logger.info(f"检测到配音快捷方式: {shortcut_path} -> {audio_path}")
-                                    break
+                        try:
+                            for item in os.listdir(actual_path):
+                                # 确保文件名是正确的字符串格式
+                                if isinstance(item, bytes):
+                                    try:
+                                        item = item.decode('utf-8')
+                                    except UnicodeDecodeError:
+                                        try:
+                                            item = item.decode('gbk')
+                                        except UnicodeDecodeError:
+                                            logger.error(f"无法解码文件名: {item}")
+                                            continue
+                                
+                                if item.lower().endswith('.lnk') and "配音" in item:
+                                    shortcut_path = os.path.join(actual_path, item)
+                                    logger.info(f"发现可能的配音快捷方式: {shortcut_path}")
+                                    audio_target = resolve_shortcut(shortcut_path)
+                                    if audio_target and os.path.isdir(audio_target):
+                                        audio_path = audio_target
+                                        has_audio_folder = True
+                                        logger.info(f"检测到配音快捷方式: {shortcut_path} -> {audio_path}")
+                                        break
+                        except Exception as e:
+                            logger.error(f"搜索配音快捷方式时出错: {str(e)}")
                 
                 if has_video_folder or has_audio_folder:
                     # 检查子文件夹中是否有媒体文件
@@ -3966,10 +4005,135 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     # 记录日志
                     logger.info(f"将表格项转换为抽取模式项: {folder_path}")
 
-    # 添加新的方法来更新媒体计数
+    # 添加一个新的方法来处理文件夹快捷方式
+    def _process_folder_shortcuts(self, folder_path, folder_name="视频", max_depth=3, _current_depth=0):
+        """
+        处理文件夹中的快捷方式，返回实际路径
+        
+        Args:
+            folder_path: 父文件夹路径
+            folder_name: 要查找的子文件夹名称（如"视频"或"配音"）
+            max_depth: 最大搜索深度，防止无限递归
+            _current_depth: 当前递归深度，用于内部跟踪
+            
+        Returns:
+            tuple: (是否找到文件夹, 实际路径)
+        """
+        from src.utils.file_utils import resolve_shortcut
+        import os
+        
+        logger = get_logger()
+        indent = "  " * _current_depth  # 用于日志缩进，便于查看层级关系
+        
+        logger.info(f"{indent}[深度{_current_depth}] 开始在 {folder_path} 中搜索 {folder_name} 文件夹")
+        
+        # 首先检查是否是普通文件夹
+        target_folder = os.path.join(folder_path, folder_name)
+        if os.path.exists(target_folder) and os.path.isdir(target_folder):
+            logger.info(f"在路径 {folder_path} 中直接找到{folder_name}文件夹: {target_folder}")
+            return True, target_folder
+        
+        # 检查特定命名格式的快捷方式
+        shortcut_paths = [
+            os.path.join(folder_path, f"{folder_name} - 快捷方式.lnk"),
+            os.path.join(folder_path, f"{folder_name}.lnk"),
+            os.path.join(folder_path, f"{folder_name}快捷方式.lnk")
+        ]
+        
+        # 检查所有可能的命名格式
+        for shortcut_path in shortcut_paths:
+            if os.path.exists(shortcut_path):
+                logger.info(f"发现{folder_name}快捷方式: {shortcut_path}")
+                try:
+                    target = resolve_shortcut(shortcut_path)
+                    if target and os.path.isdir(target):
+                        logger.info(f"解析{folder_name}快捷方式: {shortcut_path} -> {target}")
+                        return True, target
+                except Exception as e:
+                    logger.error(f"解析快捷方式失败: {shortcut_path}, 错误: {str(e)}")
+        
+        # 如果仍未找到，尝试搜索包含关键字的所有.lnk文件和子文件夹
+        if max_depth > 0:
+            try:
+                # 先收集所有项目，避免在遍历过程中修改列表
+                items = []
+                try:
+                    items = os.listdir(folder_path)
+                except Exception as e:
+                    logger.error(f"无法列出目录 {folder_path} 的内容: {str(e)}")
+                    return False, target_folder
+                
+                # 首先检查直接的快捷方式
+                for item in items:
+                    # 确保文件名是正确的字符串格式
+                    if isinstance(item, bytes):
+                        try:
+                            item = item.decode('utf-8')
+                        except UnicodeDecodeError:
+                            try:
+                                item = item.decode('gbk')
+                            except UnicodeDecodeError:
+                                logger.error(f"无法解码文件名: {item}")
+                                continue
+                    
+                    item_path = os.path.join(folder_path, item)
+                    
+                    # 检查是否是快捷方式
+                    if item.lower().endswith('.lnk') and folder_name in item:
+                        shortcut_path = item_path
+                        logger.info(f"发现可能的{folder_name}快捷方式: {shortcut_path}")
+                        try:
+                            target = resolve_shortcut(shortcut_path)
+                            if target and os.path.isdir(target):
+                                logger.info(f"解析{folder_name}快捷方式成功: {shortcut_path} -> {target}")
+                                return True, target
+                        except Exception as e:
+                            logger.error(f"解析快捷方式失败: {shortcut_path}, 错误: {str(e)}")
+                
+                # 然后检查子文件夹
+                logger.info(f"开始检查 {folder_path} 的子文件夹，当前深度: {_current_depth}，最大深度: {max_depth}")
+                for item in items:
+                    # 确保文件名是正确的字符串格式
+                    if isinstance(item, bytes):
+                        try:
+                            item = item.decode('utf-8')
+                        except UnicodeDecodeError:
+                            try:
+                                item = item.decode('gbk')
+                            except UnicodeDecodeError:
+                                logger.error(f"无法解码文件名: {item}")
+                                continue
+                    
+                    item_path = os.path.join(folder_path, item)
+                    
+                    # 只处理文件夹
+                    if os.path.isdir(item_path):
+                        logger.info(f"检查子文件夹: {item_path}")
+                        # 检查子文件夹中是否有目标文件夹
+                        sub_target_path = os.path.join(item_path, folder_name)
+                        if os.path.exists(sub_target_path) and os.path.isdir(sub_target_path):
+                            logger.info(f"在子文件夹中找到{folder_name}文件夹: {sub_target_path}")
+                            return True, sub_target_path
+                        
+                        # 递归检查子文件夹中的快捷方式和更深层次的文件夹
+                        logger.info(f"递归检查子文件夹: {item_path}，即将进入深度: {_current_depth + 1}")
+                        found, path = self._process_folder_shortcuts(item_path, folder_name, max_depth - 1, _current_depth + 1)
+                        if found:
+                            logger.info(f"在子文件夹 {item_path} 中找到{folder_name}文件夹或快捷方式: {path}")
+                            return True, path
+            except Exception as e:
+                logger.error(f"搜索{folder_name}快捷方式时出错: {str(e)}")
+        else:
+            logger.info(f"已达到最大搜索深度 {max_depth}，停止搜索")
+        
+        # 未找到有效的文件夹或快捷方式
+        logger.warning(f"未能找到{folder_name}文件夹或其快捷方式，搜索路径: {folder_path}")
+        return False, target_folder
+
+    # 修改 _update_media_counts 方法，使用新的 _process_folder_shortcuts 方法
     def _update_media_counts(self):
         """更新素材表格中每一行的视频和配音数量"""
-        from src.utils.file_utils import list_media_files, resolve_shortcut
+        from src.utils.file_utils import list_media_files
         logger.info("正在更新素材数量...")
         
         # 设置鼠标等待状态
@@ -3981,99 +4145,29 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 if not folder_path or not os.path.exists(folder_path):
                     continue
                     
-                # 查找视频文件夹
-                video_folder = os.path.join(folder_path, "视频")
+                # 使用新方法处理视频文件夹快捷方式，增加搜索深度
+                has_video_folder, video_folder = self._process_folder_shortcuts(folder_path, "视频", max_depth=4, _current_depth=0)
                 video_count = 0
-                
-                # 检查"视频"是否为普通文件夹
-                has_video_folder = os.path.exists(video_folder) and os.path.isdir(video_folder)
-                
-                # 如果不是普通文件夹，检查是否是快捷方式
-                if not has_video_folder:
-                    # 检查特定命名格式的快捷方式
-                    video_shortcut_paths = [
-                        os.path.join(folder_path, "视频 - 快捷方式.lnk"),
-                        os.path.join(folder_path, "视频.lnk"),
-                        os.path.join(folder_path, "视频快捷方式.lnk")
-                    ]
-                    
-                    # 检查所有可能的命名格式
-                    for shortcut_path in video_shortcut_paths:
-                        if os.path.exists(shortcut_path):
-                            logger.info(f"更新素材数量：发现视频快捷方式: {shortcut_path}")
-                            video_target = resolve_shortcut(shortcut_path)
-                            if video_target and os.path.isdir(video_target):
-                                video_folder = video_target
-                                has_video_folder = True
-                                logger.info(f"更新素材数量：检测到视频快捷方式: {shortcut_path} -> {video_folder}")
-                                break
-                    
-                    # 如果仍未找到，则尝试搜索包含"视频"的所有.lnk文件
-                    if not has_video_folder:
-                        for item in os.listdir(folder_path):
-                            if item.lower().endswith('.lnk') and "视频" in item:
-                                shortcut_path = os.path.join(folder_path, item)
-                                logger.info(f"更新素材数量：发现可能的视频快捷方式: {shortcut_path}")
-                                video_target = resolve_shortcut(shortcut_path)
-                                if video_target and os.path.isdir(video_target):
-                                    video_folder = video_target
-                                    has_video_folder = True
-                                    logger.info(f"更新素材数量：检测到视频快捷方式: {shortcut_path} -> {video_folder}")
-                                    break
                 
                 # 计算视频数量
                 if has_video_folder:
                     try:
                         media = list_media_files(video_folder, recursive=True)
                         video_count = len(media['videos'])
+                        logger.info(f"更新素材数量: 找到视频 {video_count} 个，路径: {video_folder}")
                     except Exception as e:
                         logger.error(f"扫描视频文件夹失败: {str(e)}")
                 
-                # 查找配音文件夹
-                audio_folder = os.path.join(folder_path, "配音")
+                # 使用新方法处理配音文件夹快捷方式，增加搜索深度
+                has_audio_folder, audio_folder = self._process_folder_shortcuts(folder_path, "配音", max_depth=4, _current_depth=0)
                 audio_count = 0
-                
-                # 检查"配音"是否为普通文件夹
-                has_audio_folder = os.path.exists(audio_folder) and os.path.isdir(audio_folder)
-                
-                # 如果不是普通文件夹，检查是否是快捷方式
-                if not has_audio_folder:
-                    # 检查特定命名格式的快捷方式
-                    audio_shortcut_paths = [
-                        os.path.join(folder_path, "配音 - 快捷方式.lnk"),
-                        os.path.join(folder_path, "配音.lnk"),
-                        os.path.join(folder_path, "配音快捷方式.lnk")
-                    ]
-                    
-                    # 检查所有可能的命名格式
-                    for shortcut_path in audio_shortcut_paths:
-                        if os.path.exists(shortcut_path):
-                            logger.info(f"更新素材数量：发现配音快捷方式: {shortcut_path}")
-                            audio_target = resolve_shortcut(shortcut_path)
-                            if audio_target and os.path.isdir(audio_target):
-                                audio_folder = audio_target
-                                has_audio_folder = True
-                                logger.info(f"更新素材数量：检测到配音快捷方式: {shortcut_path} -> {audio_folder}")
-                                break
-                    
-                    # 如果仍未找到，则尝试搜索包含"配音"的所有.lnk文件
-                    if not has_audio_folder:
-                        for item in os.listdir(folder_path):
-                            if item.lower().endswith('.lnk') and "配音" in item:
-                                shortcut_path = os.path.join(folder_path, item)
-                                logger.info(f"更新素材数量：发现可能的配音快捷方式: {shortcut_path}")
-                                audio_target = resolve_shortcut(shortcut_path)
-                                if audio_target and os.path.isdir(audio_target):
-                                    audio_folder = audio_target
-                                    has_audio_folder = True
-                                    logger.info(f"更新素材数量：检测到配音快捷方式: {shortcut_path} -> {audio_folder}")
-                                    break
                 
                 # 计算配音数量
                 if has_audio_folder:
                     try:
                         media = list_media_files(audio_folder, recursive=True)
                         audio_count = len(media['audios'])
+                        logger.info(f"更新素材数量: 找到配音 {audio_count} 个，路径: {audio_folder}")
                     except Exception as e:
                         logger.error(f"扫描音频文件夹失败: {str(e)}")
                 
@@ -4087,6 +4181,185 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         finally:
             # 恢复鼠标指针
             QApplication.restoreOverrideCursor()
+
+    # 修改 _import_material_folder 方法，使用新的 _process_folder_shortcuts 方法
+    def _import_material_folder(self, root_dir):
+        """导入指定的素材文件夹"""
+        if not root_dir or not os.path.exists(root_dir):
+            # 如果目录不存在，更新界面显示
+            self.parent_folder_title.setText("路径不存在")
+            return
+        
+        # 更新界面显示的父文件夹名称（只显示文件夹名）
+        folder_name = os.path.basename(root_dir)
+        self.parent_folder_title.setText(folder_name)
+            
+        from src.utils.file_utils import resolve_shortcut
+        from src.utils.logger import get_logger
+        
+        logger = get_logger()
+        
+        added_count = 0
+        skipped_count = 0
+        normal_count = 0
+        shortcut_count = 0
+        shortcut_errors = 0
+        
+        # 设置鼠标等待状态
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        try:
+            # 遍历根目录下的所有子文件夹
+            for item in os.listdir(root_dir):
+                # 确保文件名是正确的字符串格式
+                if isinstance(item, bytes):
+                    try:
+                        item = item.decode('utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            item = item.decode('gbk')
+                        except UnicodeDecodeError:
+                            logger.error(f"无法解码文件名: {item}")
+                            continue
+                
+                item_path = os.path.join(root_dir, item)
+                
+                actual_path = item_path
+                is_shortcut = False
+                
+                # 检查是否是快捷方式
+                if item.lower().endswith('.lnk'):
+                    logger.info(f"发现可能的快捷方式: {item_path}")
+                    shortcut_target = resolve_shortcut(item_path)
+                    if shortcut_target:
+                        actual_path = shortcut_target
+                        is_shortcut = True
+                        shortcut_count += 1
+                        logger.info(f"检测到快捷方式子文件夹: {item_path} -> {actual_path}")
+                    else:
+                        shortcut_errors += 1
+                        logger.warning(f"无法解析快捷方式: {item_path}")
+                        continue
+                elif os.path.isdir(item_path):
+                    normal_count += 1
+                else:
+                    logger.debug(f"跳过非文件夹项目: {item_path}")
+                    continue
+                
+                # 只处理文件夹(或解析后的快捷方式目标是文件夹)
+                if not os.path.isdir(actual_path):
+                    logger.warning(f"项目不是目录，跳过: {actual_path}")
+                    continue
+                
+                # 使用新方法处理视频和配音文件夹，增加搜索深度
+                has_video_folder, video_path = self._process_folder_shortcuts(actual_path, "视频", max_depth=4, _current_depth=0)
+                has_audio_folder, audio_path = self._process_folder_shortcuts(actual_path, "配音", max_depth=4, _current_depth=0)
+                
+                if has_video_folder or has_audio_folder:
+                    # 检查子文件夹中是否有媒体文件
+                    video_count = 0
+                    audio_count = 0
+                    
+                    if has_video_folder:
+                        try:
+                            media = list_media_files(video_path, recursive=True)
+                            video_count = len(media['videos'])
+                            logger.info(f"素材'{item}': 找到视频 {video_count} 个，路径: {video_path}")
+                        except Exception as e:
+                            logger.error(f"扫描视频文件夹失败: {str(e)}")
+                    
+                    if has_audio_folder:
+                        try:
+                            media = list_media_files(audio_path, recursive=True)
+                            audio_count = len(media['audios'])
+                            logger.info(f"素材'{item}': 找到配音 {audio_count} 个，路径: {audio_path}")
+                        except Exception as e:
+                            logger.error(f"扫描音频文件夹失败: {str(e)}")
+                    
+                    # 如果有媒体文件，则添加到素材列表
+                    if video_count > 0 or audio_count > 0:
+                        row_count = self.video_table.rowCount()
+                        self.video_table.setRowCount(row_count + 1)
+                        
+                        # 如果是快捷方式，显示名称时去掉.lnk后缀
+                        display_name = item
+                        if is_shortcut:
+                            if display_name.lower().endswith('.lnk'):
+                                display_name = display_name[:-4]
+                            display_name += " (快捷方式)"
+                        
+                        # 检查是否已有抽取模式设置
+                        extract_mode = self.folder_extract_modes.get(actual_path, "single_video")
+                        
+                        # 如果是多视频拼接模式，更新显示名称
+                        if extract_mode == "multi_video" and " [多视频拼接]" not in display_name:
+                            display_name += " [多视频拼接]"
+                        
+                        # 添加图标以区分本体和快捷方式
+                        folder_item = QTableWidgetItem(display_name)
+                        if is_shortcut:
+                            # 使用Qt内置图标
+                            folder_item.setIcon(QApplication.style().standardIcon(QStyle.SP_FileLinkIcon))
+                        else:
+                            folder_item.setIcon(QApplication.style().standardIcon(QStyle.SP_DirIcon))
+                        
+                        # 根据抽取模式设置字体颜色
+                        if extract_mode == "multi_video":
+                            folder_item.setForeground(QColor("#0000FF"))  # 蓝色表示多视频拼接模式
+                            folder_item.setToolTip("多视频拼接模式：允许多个短视频拼接以满足配音长度")
+                        else:
+                            folder_item.setForeground(QColor("#000000"))  # 黑色表示单视频模式
+                            folder_item.setToolTip("单视频模式：只选择时长大于或等于配音的视频")
+                        
+                        self.video_table.setItem(row_count, 0, QTableWidgetItem(str(row_count + 1)))  # 序号
+                        self.video_table.setItem(row_count, 1, folder_item)  # 素材名称（带图标）
+                        self.video_table.setItem(row_count, 2, QTableWidgetItem(actual_path))  # 素材路径 (使用实际路径)
+                        
+                        # 如果是快捷方式，添加原始路径信息
+                        tooltip = folder_item.toolTip() + f"\n实际路径: {actual_path}"
+                        if is_shortcut:
+                            tooltip = f"快捷方式: {item_path}\n{tooltip}"
+                        folder_item.setToolTip(tooltip)
+                        
+                        self.video_table.setItem(row_count, 3, QTableWidgetItem(str(video_count)))  # 视频数量
+                        self.video_table.setItem(row_count, 4, QTableWidgetItem(str(audio_count)))  # 配音数量
+                        
+                        # 根据抽取模式设置状态文本
+                        if extract_mode == "multi_video":
+                            status_text = "待处理 (多视频拼接)"
+                        else:
+                            status_text = "待处理 (单视频)"
+                        
+                        # 使用自定义的ExtractModeItem来替代普通的QTableWidgetItem
+                        status_item = ExtractModeItem(status_text, extract_mode, actual_path)
+                        status_item.set_status("待处理")
+                        self.video_table.setItem(row_count, 5, status_item)  # 状态
+                        
+                        added_count += 1
+                    else:
+                        skipped_count += 1
+                        logger.warning(f"跳过没有媒体文件的素材文件夹: {actual_path}")
+                else:
+                    skipped_count += 1
+                    logger.warning(f"跳过没有视频或配音子文件夹的素材文件夹: {actual_path}")
+        except Exception as e:
+            logger.error(f"导入素材文件夹时出错: {str(e)}")
+        finally:
+            # 恢复鼠标状态
+            QApplication.restoreOverrideCursor()
+        
+        # 记录导入情况的信息
+        if added_count > 0:
+            logger.info(f"自动导入完成: 成功导入 {added_count} 个素材文件夹，跳过 {skipped_count} 个不符合条件的文件夹")
+            # 记录混合情况的信息
+            if normal_count > 0 and shortcut_count > 0:
+                logger.info(f"自动导入: 检测到混合模式，包含 {normal_count} 个普通文件夹和 {shortcut_count} 个快捷方式")
+            elif shortcut_count > 0:
+                logger.info(f"自动导入: 检测到纯快捷方式模式，包含 {shortcut_count} 个快捷方式")
+            else:
+                logger.info(f"自动导入: 检测到标准模式，包含 {normal_count} 个普通文件夹")
+        else:
+            logger.warning(f"自动导入: 未找到符合条件的素材文件夹，路径: {root_dir}")
 
     # 添加窗口显示事件处理
     def showEvent(self, event):

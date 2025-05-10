@@ -290,102 +290,135 @@ class VideoProcessor:
                       count: int = 1, 
                       bgm_path: str = None) -> Tuple[List[str], str]:
         """
-        批量处理视频
+        批量处理多个素材文件夹
         
         Args:
-            material_folders: 素材文件夹信息列表
+            material_folders: 素材文件夹列表，每个元素是一个字典，包含路径和名称
             output_dir: 输出目录
-            count: 要生成的视频数量
+            count: 每个素材文件夹生成的视频数量
             bgm_path: 背景音乐路径
             
         Returns:
-            Tuple[List[str], str]: 生成的视频文件路径列表和总用时
+            Tuple[List[str], str]: 生成的视频文件路径列表和总处理时间
         """
-        self.stop_requested = False
+        if not material_folders:
+            logger.error("没有提供素材文件夹")
+            return [], "0:00:00"
+            
+        if not output_dir:
+            logger.error("没有提供输出目录")
+            return [], "0:00:00"
+            
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 记录开始时间
+        start_time = time.time()
+        
+        # 生成的视频文件路径列表
         output_videos = []
         
-        # 开始计时
-        self.start_time = time.time()
+        # 总共需要处理的素材文件夹数量
+        total_folders = len(material_folders)
         
-        # 启动进度定时更新
-        self._start_progress_timer()
-        
-        try:
-            # 扫描素材文件夹
-            self.report_progress("开始扫描素材文件夹...", 0)
+        # 处理每个素材文件夹
+        for idx, folder_info in enumerate(material_folders):
+            folder_path = folder_info["path"]
+            folder_name = folder_info.get("name", os.path.basename(folder_path))
             
-            try:
-                material_data = self._scan_material_folders(material_folders)
-            except Exception as e:
-                logger.error(f"扫描素材文件夹失败: {str(e)}")
-                raise
-            
-            # 检查是否找到素材
-            if not material_data:
-                error_msg = "没有找到可用的素材文件"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-            
-            # 检查每个文件夹是否有视频
-            for folder_name, data in material_data.items():
-                if not data.get("videos", []):
-                    logger.warning(f"场景 '{folder_name}' 中没有找到视频文件")
-            
-            self.report_progress("素材扫描完成，开始生成视频...", 5)
-            
-            # 生成多个视频
-            output_videos = []
-            
-            # 计算每个视频的进度百分比
-            progress_per_video = 90.0 / count if count > 0 else 0
-            
-            # 添加当前时间戳到文件名，避免覆盖之前的文件
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            
-            # 生成视频文件
-            for i in range(count):
-                if self.stop_requested:
-                    logger.info("收到停止请求，中断视频批量处理")
-                    break
+            # 检查素材文件夹是否存在
+            if not os.path.exists(folder_path):
+                logger.warning(f"素材文件夹不存在: {folder_path}")
+                continue
                 
-                # 构建输出文件路径
-                output_filename = f"合成视频_{timestamp}_{i+1}.mp4"
+            # 更新进度
+            progress_percent = (idx / total_folders) * 100
+            self.report_progress(f"正在处理素材 {idx+1}/{total_folders}: {folder_name}", progress_percent)
+            
+            # 使用_process_folder_shortcuts方法处理文件夹中的快捷方式
+            folder_paths = self._process_folder_shortcuts(folder_path)
+            video_folder_paths = folder_paths["video_folder_paths"]
+            audio_folder_paths = folder_paths["audio_folder_paths"]
+            
+            # 检查是否有视频文件夹
+            if not video_folder_paths:
+                logger.warning(f"素材 '{folder_name}' 中没有找到视频文件夹")
+                continue
+                
+            # 检查是否有配音文件夹
+            if not audio_folder_paths:
+                logger.warning(f"素材 '{folder_name}' 中没有找到配音文件夹")
+                continue
+                
+            # 获取视频和配音文件
+            video_files = []
+            for video_folder in video_folder_paths:
+                try:
+                    video_files.extend(self._get_video_files(video_folder))
+                except Exception as e:
+                    logger.error(f"获取视频文件时出错: {str(e)}")
+            
+            audio_files = []
+            for audio_folder in audio_folder_paths:
+                try:
+                    audio_files.extend(self._get_audio_files(audio_folder))
+                except Exception as e:
+                    logger.error(f"获取配音文件时出错: {str(e)}")
+            
+            # 检查是否有视频文件
+            if not video_files:
+                logger.warning(f"素材 '{folder_name}' 中没有找到视频文件")
+                continue
+                
+            # 检查是否有配音文件
+            if not audio_files:
+                logger.warning(f"素材 '{folder_name}' 中没有找到配音文件")
+                continue
+                
+            # 为每个配音文件生成视频
+            for i in range(min(count, len(audio_files))):
+                if i >= len(audio_files):
+                    logger.warning(f"素材 '{folder_name}' 中配音文件不足，只处理 {len(audio_files)} 个")
+                    break
+                    
+                # 选择配音文件
+                audio_file = audio_files[i]
+                
+                # 生成输出文件名
+                output_filename = f"{folder_name}_{i+1}.mp4"
                 output_path = os.path.join(output_dir, output_filename)
                 
-                # 设置该视频的进度范围
-                progress_start = 5 + i * progress_per_video
-                progress_end = 5 + (i + 1) * progress_per_video
-                
-                self.report_progress(f"正在生成第 {i+1}/{count} 个视频...", progress_start)
+                # 更新进度
+                sub_progress = ((idx + (i+1)/count) / total_folders) * 100
+                self.report_progress(f"正在处理素材 {idx+1}/{total_folders}: {folder_name} - 视频 {i+1}/{count}", sub_progress)
                 
                 try:
-                    # 处理单个视频
-                    result_path = self._process_single_video(
-                        material_data, 
-                        output_path, 
-                        bgm_path,
-                        progress_start,
-                        progress_end
+                    # 生成视频
+                    success = self.compose_video(
+                        video_files=video_files,
+                        audio_file=audio_file,
+                        output_path=output_path,
+                        bgm_path=bgm_path
                     )
                     
-                    output_videos.append(result_path)
-                    logger.info(f"第 {i+1}/{count} 个视频生成完成: {result_path}")
+                    if success:
+                        output_videos.append(output_path)
+                        logger.info(f"成功生成视频: {output_path}")
+                    else:
+                        logger.error(f"生成视频失败: {output_path}")
                 except Exception as e:
-                    logger.error(f"生成第 {i+1}/{count} 个视频时出错: {str(e)}")
-                    # 继续处理下一个视频
-                    continue
-            
-            # 计算总用时
-            total_time = time.time() - self.start_time
-            total_time_str = self._format_time(total_time)
-            
-            self.report_progress(f"批量视频处理完成，成功生成: {len(output_videos)}/{count}，总用时: {total_time_str}", 100)
-            logger.info(f"批量视频处理完成，成功生成: {len(output_videos)}/{count}，总用时: {total_time_str}")
-            
-            return output_videos, total_time_str
-        finally:
-            # 停止进度定时更新
-            self._stop_progress_timer()
+                    logger.error(f"处理视频时出错: {str(e)}")
+        
+        # 计算总处理时间
+        end_time = time.time()
+        total_time = end_time - start_time
+        
+        # 格式化处理时间
+        hours, remainder = divmod(total_time, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        time_str = f"{int(hours)}:{int(minutes):02d}:{int(seconds):02d}"
+        
+        return output_videos, time_str
     
     def stop_processing(self):
         """停止处理"""
@@ -407,7 +440,7 @@ class VideoProcessor:
         - 支持同一父文件夹下混合普通文件夹和快捷方式
         
         Args:
-            material_folders: 素材文件夹信息列表，每个字典中可以包含 extract_mode 字段指定抽取模式
+            material_folders: 素材文件夹信息列表
             
         Returns:
             Dict[str, Dict[str, Any]]: 素材数据，按子文件夹顺序排列
@@ -420,169 +453,224 @@ class VideoProcessor:
         # 计算每个文件夹的扫描进度
         progress_per_folder = 4.0 / len(material_folders) if material_folders else 0
         
+        # 遍历每个素材文件夹
         for idx, folder_info in enumerate(material_folders):
-            folder_path = folder_info["path"]
-            folder_name = os.path.basename(folder_path)
-            
-            # 获取抽取模式设置，默认为单视频模式
+            folder_path = folder_info.get("path", "")
+            folder_name = folder_info.get("name", os.path.basename(folder_path) if folder_path else "未命名")
             extract_mode = folder_info.get("extract_mode", "single_video")
-            logger.info(f"文件夹 '{folder_name}' 使用抽取模式: {extract_mode}")
             
-            self.report_progress(f"正在扫描素材文件夹: {folder_name}", 1 + progress_per_folder * idx)
+            if not folder_path or not os.path.exists(folder_path):
+                self.logger.warning(f"素材文件夹不存在: {folder_path}")
+                continue
+                
+            self.report_progress(f"扫描素材文件夹: {folder_name}", 1 + progress_per_folder * idx)
             
-            # 检测是否为父文件夹导入模式（检查是否包含子文件夹）
-            is_parent_folder = False
-            sub_folders = []
-            normal_count = 0
-            shortcut_count = 0
-            shortcut_errors = 0
-            
-            try:
-                # 获取子文件夹列表
-                for item in os.listdir(folder_path):
-                    item_path = os.path.join(folder_path, item)
-                    
-                    actual_path = item_path
-                    is_shortcut = False
-                    
-                    # 检查是否是快捷方式
-                    if item.lower().endswith('.lnk'):
-                        logger.info(f"父文件夹模式：检测到可能的快捷方式: {item_path}")
-                        shortcut_target = resolve_shortcut(item_path)
-                        if shortcut_target:
-                            actual_path = shortcut_target
-                            is_shortcut = True
-                            shortcut_count += 1
-                            logger.info(f"检测到快捷方式子文件夹: {item_path} -> {actual_path}")
-                        else:
-                            shortcut_errors += 1
-                            logger.warning(f"无法解析快捷方式: {item_path}")
-                            continue
-                    elif os.path.isdir(item_path):
-                        normal_count += 1
-                    else:
-                        logger.debug(f"跳过非文件夹项目: {item_path}")
-                        continue
-                    
-                    # 检查实际路径是否是目录
-                    if not os.path.isdir(actual_path):
-                        logger.warning(f"路径不是目录，跳过: {actual_path}")
-                        continue
-                    
-                    # 检查子文件夹是否包含标准结构（视频文件夹或配音文件夹）
-                    video_dir = os.path.join(actual_path, "视频")
-                    audio_dir = os.path.join(actual_path, "配音")
-                    
-                    has_valid_structure = False
-                    
-                    if os.path.isdir(video_dir):
-                        has_valid_structure = True
-                    
-                    if os.path.isdir(audio_dir):
-                        has_valid_structure = True
-                    
-                    if has_valid_structure:
-                        sub_folder_info = {
-                            "path": actual_path,
-                            "name": item,  # 保留原始名称，用于显示
-                            "is_shortcut": is_shortcut,
-                            "original_path": item_path if is_shortcut else None,
-                            "extract_mode": extract_mode  # 传递父文件夹的抽取模式给子文件夹
-                        }
-                        sub_folders.append(sub_folder_info)
-                    else:
-                        logger.warning(f"子文件夹不包含视频或配音目录，跳过: {actual_path}")
-            except Exception as e:
-                logger.error(f"扫描父文件夹时出错: {folder_path}, 错误: {str(e)}")
-                # 继续处理其他文件夹
-            
-            # 如果找到符合条件的子文件夹，认为是父文件夹导入模式
-            if sub_folders:
-                is_parent_folder = True
+            # 检查是否是多视频拼接模式
+            if extract_mode == "multi_video":
+                # 多视频拼接模式：直接将素材文件夹作为一个场景
+                self.logger.info(f"使用多视频拼接模式处理素材: {folder_path}")
                 
-                # 记录混合情况的信息
-                folder_detail = ""
-                if normal_count > 0 and shortcut_count > 0:
-                    folder_detail = f"(包含 {normal_count} 个普通子文件夹和 {shortcut_count} 个快捷方式子文件夹)"
-                    logger.info(f"检测到混合模式：父文件夹 '{folder_name}' 中包含 {normal_count} 个普通子文件夹和 {shortcut_count} 个快捷方式子文件夹")
-                elif shortcut_count > 0:
-                    folder_detail = f"(包含 {shortcut_count} 个快捷方式子文件夹)"
-                    logger.info(f"检测到纯快捷方式模式：父文件夹 '{folder_name}' 中包含 {shortcut_count} 个快捷方式子文件夹")
-                else:
-                    folder_detail = f"(包含 {normal_count} 个普通子文件夹)"
-                    logger.info(f"检测到标准父文件夹模式：父文件夹 '{folder_name}' 中包含 {normal_count} 个普通子文件夹")
-                
-                # 显示有效子文件夹数量
-                found_count = len(sub_folders)
-                logger.info(f"在父文件夹 '{folder_name}' {folder_detail} 中找到 {found_count} 个有效子文件夹")
-                
-                # 如果有快捷方式解析错误，记录警告
-                if shortcut_errors > 0:
-                    logger.warning(f"父文件夹 '{folder_name}' 中有 {shortcut_errors} 个快捷方式无法解析")
-                
-                # 对子文件夹按名称排序，确保按正确顺序处理
-                sub_folders.sort(key=lambda x: x["name"])
-                
-                # 逐个处理子文件夹
-                for sub_idx, sub_folder_info in enumerate(sub_folders):
-                    sub_path = sub_folder_info["path"]
-                    sub_name = sub_folder_info["name"]
-                    
-                    if sub_folder_info["is_shortcut"]:
-                        # 移除.lnk后缀，以便更好的显示
-                        if sub_name.lower().endswith('.lnk'):
-                            sub_name = sub_name[:-4]
-                        sub_display_name = f"{sub_name} (快捷方式)"
-                    else:
-                        sub_display_name = sub_name
-                    
-                    self.report_progress(
-                        f"扫描段落 {sub_idx+1}/{len(sub_folders)}: {sub_display_name}", 
-                        1 + progress_per_folder * idx + (progress_per_folder * sub_idx / len(sub_folders))
-                    )
-                    
-                    # 使用顺序编号作为键，确保段落按顺序排列
-                    segment_key = f"{sub_idx+1:02d}_{sub_name}"
-                    
-                    # 获取此子文件夹的抽取模式
-                    sub_extract_mode = sub_folder_info.get("extract_mode", extract_mode)
-                    
-                    # 初始化段落数据
-                    material_data[segment_key] = {
-                        "videos": [],
-                        "audios": [],
-                        "path": sub_path,
-                        "segment_index": sub_idx,  # 存储段落索引，用于排序
-                        "parent_folder": folder_name,  # 记录所属父文件夹
-                        "is_shortcut": sub_folder_info["is_shortcut"],  # 记录是否为快捷方式
-                        "original_path": sub_folder_info["original_path"],  # 记录原始快捷方式路径
-                        "display_name": sub_display_name,  # 用于显示的名称
-                        "extract_mode": sub_extract_mode  # 保存抽取模式设置
-                    }
-                    
-                    try:
-                        # 扫描视频文件夹
-                        self._scan_media_folder(sub_path, segment_key, material_data)
-                    except Exception as e:
-                        logger.error(f"扫描子文件夹时出错: {sub_path}, 错误: {str(e)}")
-                        # 继续处理其他子文件夹
-            else:
-                # 原始模式：直接扫描所提供的文件夹
-                # 初始化素材数据
-                material_data[folder_name] = {
+                # 初始化场景数据
+                segment_key = f"01_{folder_name}"
+                material_data[segment_key] = {
                     "videos": [],
                     "audios": [],
                     "path": folder_path,
-                    "display_name": folder_name,
-                    "extract_mode": extract_mode  # 添加抽取模式设置
+                    "segment_index": 0,  # 存储段落索引，用于排序
+                    "parent_folder": folder_name,  # 记录所属父文件夹
+                    "is_shortcut": False,  # 记录是否为快捷方式
+                    "original_path": folder_path,  # 记录原始路径
+                    "display_name": folder_name,  # 用于显示的名称
+                    "extract_mode": "multi_video"  # 标记为多视频拼接模式
                 }
                 
+                # 扫描视频和配音文件夹
+                self._scan_media_folder(folder_path, segment_key, material_data)
+                
+            else:
+                # 单视频模式：检查是否有子文件夹
+                self.logger.info(f"使用单视频模式处理素材: {folder_path}")
+                
+                # 获取所有子文件夹，包括普通文件夹和快捷方式
+                sub_folders = []
+                
                 try:
-                    # 扫描视频文件夹
-                    self._scan_media_folder(folder_path, folder_name, material_data)
+                    # 遍历文件夹中的所有项目
+                    for item in os.listdir(folder_path):
+                        # 确保文件名是正确的字符串格式
+                        if isinstance(item, bytes):
+                            try:
+                                item = item.decode('utf-8')
+                            except UnicodeDecodeError:
+                                try:
+                                    item = item.decode('gbk')
+                                except UnicodeDecodeError:
+                                    self.logger.error(f"无法解码文件名: {item}")
+                                    continue
+                        
+                        item_path = os.path.join(folder_path, item)
+                        is_shortcut = False
+                        actual_path = item_path
+                        
+                        # 检查是否是快捷方式
+                        if item.lower().endswith('.lnk'):
+                            self.logger.debug(f"发现可能的快捷方式: {item_path}")
+                            shortcut_target = resolve_shortcut(item_path)
+                            if shortcut_target and os.path.isdir(shortcut_target):
+                                actual_path = shortcut_target
+                                is_shortcut = True
+                                self.logger.info(f"解析快捷方式成功: {item_path} -> {actual_path}")
+                            else:
+                                self.logger.warning(f"无法解析快捷方式或目标不是目录: {item_path}")
+                                continue
+                                
+                        # 检查是否是文件夹
+                        if os.path.isdir(actual_path):
+                            # 检查是否有视频或配音子文件夹
+                            has_video = os.path.exists(os.path.join(actual_path, "视频"))
+                            has_audio = os.path.exists(os.path.join(actual_path, "配音"))
+                            
+                            # 检查是否有视频快捷方式
+                            if not has_video:
+                                video_shortcut_paths = [
+                                    os.path.join(actual_path, "视频 - 快捷方式.lnk"),
+                                    os.path.join(actual_path, "视频.lnk"),
+                                    os.path.join(actual_path, "视频快捷方式.lnk")
+                                ]
+                                
+                                for shortcut_path in video_shortcut_paths:
+                                    if os.path.exists(shortcut_path):
+                                        has_video = True
+                                        break
+                                        
+                                # 如果仍未找到，尝试搜索包含"视频"的所有.lnk文件
+                                if not has_video:
+                                    try:
+                                        for sub_item in os.listdir(actual_path):
+                                            # 确保文件名是正确的字符串格式
+                                            if isinstance(sub_item, bytes):
+                                                try:
+                                                    sub_item = sub_item.decode('utf-8')
+                                                except UnicodeDecodeError:
+                                                    try:
+                                                        sub_item = sub_item.decode('gbk')
+                                                    except UnicodeDecodeError:
+                                                        self.logger.error(f"无法解码文件名: {sub_item}")
+                                                        continue
+                                            
+                                            if sub_item.lower().endswith('.lnk') and "视频" in sub_item:
+                                                has_video = True
+                                                break
+                                    except Exception as e:
+                                        self.logger.error(f"搜索视频快捷方式时出错: {str(e)}")
+                            
+                            # 检查是否有配音快捷方式
+                            if not has_audio:
+                                audio_shortcut_paths = [
+                                    os.path.join(actual_path, "配音 - 快捷方式.lnk"),
+                                    os.path.join(actual_path, "配音.lnk"),
+                                    os.path.join(actual_path, "配音快捷方式.lnk")
+                                ]
+                                
+                                for shortcut_path in audio_shortcut_paths:
+                                    if os.path.exists(shortcut_path):
+                                        has_audio = True
+                                        break
+                                        
+                                # 如果仍未找到，尝试搜索包含"配音"的所有.lnk文件
+                                if not has_audio:
+                                    try:
+                                        for sub_item in os.listdir(actual_path):
+                                            # 确保文件名是正确的字符串格式
+                                            if isinstance(sub_item, bytes):
+                                                try:
+                                                    sub_item = sub_item.decode('utf-8')
+                                                except UnicodeDecodeError:
+                                                    try:
+                                                        sub_item = sub_item.decode('gbk')
+                                                    except UnicodeDecodeError:
+                                                        self.logger.error(f"无法解码文件名: {sub_item}")
+                                                        continue
+                                            
+                                            if sub_item.lower().endswith('.lnk') and "配音" in sub_item:
+                                                has_audio = True
+                                                break
+                                    except Exception as e:
+                                        self.logger.error(f"搜索配音快捷方式时出错: {str(e)}")
+                            
+                            # 如果有视频或配音子文件夹，则添加到子文件夹列表
+                            if has_video or has_audio:
+                                sub_folders.append({
+                                    "name": item,
+                                    "path": actual_path,
+                                    "is_shortcut": is_shortcut,
+                                    "original_path": item_path
+                                })
                 except Exception as e:
-                    logger.error(f"扫描素材文件夹时出错: {folder_path}, 错误: {str(e)}")
-                    # 继续处理其他文件夹
+                    self.logger.error(f"扫描子文件夹时出错: {str(e)}")
+                    continue
+                
+                # 如果没有找到子文件夹，则直接使用当前文件夹
+                if not sub_folders:
+                    self.logger.info(f"未找到有效的子文件夹，直接使用当前文件夹: {folder_path}")
+                    
+                    # 初始化场景数据
+                    segment_key = f"01_{folder_name}"
+                    material_data[segment_key] = {
+                        "videos": [],
+                        "audios": [],
+                        "path": folder_path,
+                        "segment_index": 0,
+                        "parent_folder": folder_name,
+                        "is_shortcut": False,
+                        "original_path": folder_path,
+                        "display_name": folder_name
+                    }
+                    
+                    # 扫描视频和配音文件夹
+                    self._scan_media_folder(folder_path, segment_key, material_data)
+                else:
+                    # 按名称排序子文件夹
+                    sub_folders.sort(key=lambda x: x["name"])
+                    
+                    # 处理每个子文件夹
+                    for sub_idx, sub_folder_info in enumerate(sub_folders):
+                        sub_path = sub_folder_info["path"]
+                        sub_name = sub_folder_info["name"]
+                        
+                        if sub_folder_info["is_shortcut"]:
+                            # 移除.lnk后缀，以便更好的显示
+                            if sub_name.lower().endswith('.lnk'):
+                                sub_name = sub_name[:-4]
+                            sub_display_name = f"{sub_name} (快捷方式)"
+                        else:
+                            sub_display_name = sub_name
+                        
+                        self.report_progress(
+                            f"扫描段落 {sub_idx+1}/{len(sub_folders)}: {sub_display_name}", 
+                            1 + progress_per_folder * idx + (progress_per_folder * sub_idx / len(sub_folders))
+                        )
+                        
+                        # 使用顺序编号作为键，确保段落按顺序排列
+                        segment_key = f"{sub_idx+1:02d}_{sub_name}"
+                        
+                        # 初始化段落数据
+                        material_data[segment_key] = {
+                            "videos": [],
+                            "audios": [],
+                            "path": sub_path,
+                            "segment_index": sub_idx,  # 存储段落索引，用于排序
+                            "parent_folder": folder_name,  # 记录所属父文件夹
+                            "is_shortcut": sub_folder_info["is_shortcut"],  # 记录是否为快捷方式
+                            "original_path": sub_folder_info["original_path"],  # 记录原始快捷方式路径
+                            "display_name": sub_display_name  # 用于显示的名称
+                        }
+                        
+                        try:
+                            # 扫描视频文件夹
+                            self._scan_media_folder(sub_path, segment_key, material_data)
+                        except Exception as e:
+                            self.logger.error(f"扫描段落 {sub_display_name} 时出错: {str(e)}")
         
         return material_data
     
@@ -2531,3 +2619,432 @@ class VideoProcessor:
         except Exception as e:
             self.logger.warning(f"ffprobe检查视频失败: {e}")
             return False
+
+    def _process_folder_shortcuts(self, folder_path):
+        """处理文件夹中的快捷方式，解析视频和配音文件夹的快捷方式"""
+        from src.utils.file_utils import resolve_shortcut
+        
+        # 初始化返回结果
+        result = {
+            "video_folder": os.path.join(folder_path, "视频"),
+            "audio_folder": os.path.join(folder_path, "配音"),
+            "video_folder_paths": [],
+            "audio_folder_paths": []
+        }
+        
+        # 检查视频文件夹是否存在，如果不存在则尝试查找快捷方式
+        if not os.path.exists(result["video_folder"]) or not os.path.isdir(result["video_folder"]):
+            self.logger.debug(f"常规视频文件夹不存在，尝试寻找快捷方式: {result['video_folder']}")
+            
+            # 检查所有可能的命名格式
+            video_shortcut_candidates = [
+                os.path.join(folder_path, "视频 - 快捷方式.lnk"),
+                os.path.join(folder_path, "视频.lnk"),
+                os.path.join(folder_path, "视频快捷方式.lnk")
+            ]
+            
+            # 添加更多可能的快捷方式路径
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                try:
+                    for item in os.listdir(folder_path):
+                        # 确保文件名是正确的字符串格式
+                        if isinstance(item, bytes):
+                            try:
+                                item = item.decode('utf-8')
+                            except UnicodeDecodeError:
+                                try:
+                                    item = item.decode('gbk')
+                                except UnicodeDecodeError:
+                                    self.logger.error(f"无法解码文件名: {item}")
+                                    continue
+                        
+                        if item.lower().endswith('.lnk') and "视频" in item:
+                            shortcut_path = os.path.join(folder_path, item)
+                            if shortcut_path not in video_shortcut_candidates:
+                                video_shortcut_candidates.append(shortcut_path)
+                except Exception as e:
+                    self.logger.error(f"搜索视频快捷方式时出错: {str(e)}")
+            
+            # 检查所有候选快捷方式
+            for shortcut_path in video_shortcut_candidates:
+                if os.path.exists(shortcut_path):
+                    self.logger.info(f"发现视频文件夹快捷方式: {shortcut_path}")
+                    target_path = resolve_shortcut(shortcut_path)
+                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                        self.logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                        result["video_folder_paths"] = [target_path]
+                        break
+        else:
+            result["video_folder_paths"] = [result["video_folder"]]
+        
+        # 检查配音文件夹是否存在，如果不存在则尝试查找快捷方式
+        if not os.path.exists(result["audio_folder"]) or not os.path.isdir(result["audio_folder"]):
+            self.logger.debug(f"常规配音文件夹不存在，尝试寻找快捷方式: {result['audio_folder']}")
+            
+            # 检查所有可能的命名格式
+            audio_shortcut_candidates = [
+                os.path.join(folder_path, "配音 - 快捷方式.lnk"),
+                os.path.join(folder_path, "配音.lnk"),
+                os.path.join(folder_path, "配音快捷方式.lnk")
+            ]
+            
+            # 添加更多可能的快捷方式路径
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                try:
+                    for item in os.listdir(folder_path):
+                        # 确保文件名是正确的字符串格式
+                        if isinstance(item, bytes):
+                            try:
+                                item = item.decode('utf-8')
+                            except UnicodeDecodeError:
+                                try:
+                                    item = item.decode('gbk')
+                                except UnicodeDecodeError:
+                                    self.logger.error(f"无法解码文件名: {item}")
+                                    continue
+                        
+                        if item.lower().endswith('.lnk') and "配音" in item:
+                            shortcut_path = os.path.join(folder_path, item)
+                            if shortcut_path not in audio_shortcut_candidates:
+                                audio_shortcut_candidates.append(shortcut_path)
+                except Exception as e:
+                    self.logger.error(f"搜索配音快捷方式时出错: {str(e)}")
+            
+            # 检查所有候选快捷方式
+            for shortcut_path in audio_shortcut_candidates:
+                if os.path.exists(shortcut_path):
+                    self.logger.info(f"发现配音文件夹快捷方式: {shortcut_path}")
+                    target_path = resolve_shortcut(shortcut_path)
+                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                        self.logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                        result["audio_folder_paths"] = [target_path]
+                        break
+        else:
+            result["audio_folder_paths"] = [result["audio_folder"]]
+        
+        return result
+
+    def compose_video(self, 
+                    video_files: List[str], 
+                    audio_file: str, 
+                    output_path: str, 
+                    bgm_path: str = None) -> bool:
+        """
+        合成单个视频
+        
+        Args:
+            video_files: 视频文件列表
+            audio_file: 配音文件路径
+            output_path: 输出文件路径
+            bgm_path: 背景音乐路径
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not video_files:
+            logger.error("没有提供视频文件")
+            return False
+            
+        if not audio_file or not os.path.exists(audio_file):
+            logger.warning(f"配音文件不存在: {audio_file}")
+            # 继续处理，但不添加配音
+        
+        # 确保输出目录存在
+        output_dir = os.path.dirname(output_path)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 获取硬件加速类型和编码器
+        hardware_accel = self.settings.get("hardware_accel", "none")
+        encoder = self.settings.get("encoder", "libx264")
+        
+        # 记录开始时间
+        start_time = time.time()
+        
+        # 初始化打开的资源列表，用于最后清理
+        open_resources = []
+        
+        try:
+            # 随机打乱视频顺序
+            import random
+            random.shuffle(video_files)
+            
+            # 加载配音文件
+            audio_duration = 0
+            if audio_file and os.path.exists(audio_file):
+                try:
+                    audio_clip = AudioFileClip(audio_file)
+                    open_resources.append(audio_clip)
+                    audio_duration = audio_clip.duration
+                    logger.info(f"配音文件时长: {audio_duration:.2f}秒")
+                except Exception as e:
+                    logger.error(f"加载配音文件失败: {str(e)}")
+                    audio_file = None
+            
+            # 准备拼接的片段
+            concat_clips = []
+            total_duration = 0
+            
+            # 拼接视频片段直到达到配音时长
+            for video_file in video_files:
+                if total_duration >= audio_duration and audio_duration > 0:
+                    break
+                    
+                try:
+                    # 加载视频剪辑
+                    video_clip = VideoFileClip(video_file)
+                    open_resources.append(video_clip)
+                    
+                    # 计算需要的时长
+                    if audio_duration > 0:
+                        remaining_duration = audio_duration - total_duration
+                        clip_duration = min(remaining_duration, video_clip.duration)
+                    else:
+                        # 如果没有配音，使用整个视频
+                        clip_duration = video_clip.duration
+                    
+                    # 裁剪视频
+                    if clip_duration < video_clip.duration:
+                        video_clip = video_clip.subclip(0, clip_duration)
+                    
+                    # 添加到拼接列表
+                    concat_clips.append(video_clip)
+                    total_duration += clip_duration
+                    
+                    logger.info(f"添加视频片段: {os.path.basename(video_file)}, 时长: {clip_duration:.2f}秒")
+                except Exception as e:
+                    logger.error(f"处理视频文件失败: {str(e)}")
+                    continue
+            
+            # 检查是否有视频片段
+            if not concat_clips:
+                logger.error("没有可用的视频片段")
+                return False
+            
+            # 合并视频片段
+            if len(concat_clips) > 1:
+                logger.info(f"合并 {len(concat_clips)} 个视频片段")
+                final_clip = concatenate_videoclips(concat_clips)
+                open_resources.append(final_clip)
+            else:
+                final_clip = concat_clips[0]
+            
+            # 添加配音
+            if audio_file and os.path.exists(audio_file) and 'audio_clip' in locals():
+                # 如果配音时长小于视频时长，则裁剪视频
+                if audio_duration < final_clip.duration:
+                    final_clip = final_clip.subclip(0, audio_duration)
+                
+                # 替换原始音频
+                final_clip = final_clip.set_audio(audio_clip)
+                logger.info("已添加配音")
+            
+            # 添加背景音乐
+            if bgm_path and os.path.exists(bgm_path):
+                try:
+                    # 加载背景音乐
+                    bgm_clip = AudioFileClip(bgm_path)
+                    open_resources.append(bgm_clip)
+                    
+                    # 调整背景音乐音量
+                    bgm_volume = self.settings.get("bgm_volume", 0.3)
+                    bgm_clip = bgm_clip.volumex(bgm_volume)
+                    
+                    # 如果背景音乐时长小于视频时长，则循环播放
+                    if bgm_clip.duration < final_clip.duration:
+                        repeats = int(final_clip.duration / bgm_clip.duration) + 1
+                        bgm_clips = [bgm_clip] * repeats
+                        bgm_clip = concatenate_videoclips(bgm_clips)
+                        open_resources.append(bgm_clip)
+                    
+                    # 裁剪背景音乐
+                    bgm_clip = bgm_clip.subclip(0, final_clip.duration)
+                    
+                    # 合并配音和背景音乐
+                    if final_clip.audio:
+                        final_audio = CompositeAudioClip([final_clip.audio, bgm_clip])
+                        final_clip = final_clip.set_audio(final_audio)
+                    else:
+                        final_clip = final_clip.set_audio(bgm_clip)
+                    
+                    logger.info("已添加背景音乐")
+                except Exception as e:
+                    logger.error(f"添加背景音乐失败: {str(e)}")
+            
+            # 创建临时文件
+            temp_dir = os.path.join(os.path.dirname(output_path), "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            temp_raw_video = os.path.join(temp_dir, f"temp_raw_{uuid.uuid4()}.mp4")
+            
+            # 使用moviepy导出初始视频
+            logger.info("开始导出视频...")
+            
+            # 获取编码器设置
+            codec = encoder
+            hardware_type = hardware_accel
+            
+            # 导出视频
+            try:
+                # 确保使用硬件加速编码器，如果兼容模式开启则使用GPU编码器，否则回退到libx264
+                temp_codec = codec if self.settings.get("compatibility_mode", True) else "libx264"
+                logger.info(f"临时文件将使用编码器: {temp_codec}")
+                
+                # 记录最终确定的硬件编码器
+                final_encoder = temp_codec
+                logger.info(f"最终确定的硬件编码器: {final_encoder}")
+                
+                # 导出视频使用GPU编码
+                final_clip.write_videofile(
+                    temp_raw_video, 
+                    fps=30, 
+                    codec=temp_codec,  # 对临时文件也尝试使用GPU编码
+                    audio_codec="aac",
+                    remove_temp=True,
+                    write_logfile=False,
+                    preset="fast", 
+                    verbose=False,
+                    threads=self.settings.get("threads", 4),
+                    ffmpeg_params=[
+                        "-hide_banner", "-y",
+                        "-pix_fmt", "yuv420p",  # 确保使用标准像素格式
+                        "-profile:v", "high",   # 使用高质量配置文件
+                        "-level", "4.1",        # 兼容性级别
+                        "-movflags", "+faststart" # 优化网络流式传输
+                    ]
+                )
+            except Exception as e:
+                logger.error(f"导出视频失败: {str(e)}")
+                return False
+            
+            # 使用FFmpeg添加水印和进行最终编码
+            if os.path.exists(temp_raw_video):
+                # 获取水印设置
+                watermark_enabled = self.settings.get("watermark_enabled", False)
+                watermark_text = self.settings.get("watermark_text", "")
+                watermark_position = self.settings.get("watermark_position", "右下角")
+                watermark_font_size = self.settings.get("watermark_font_size", 24)
+                watermark_color = self.settings.get("watermark_color", "white")
+                
+                # 获取FFmpeg命令路径
+                ffmpeg_cmd = self._get_ffmpeg_cmd()
+                
+                # 构建FFmpeg命令
+                cmd = [ffmpeg_cmd, "-y", "-i", temp_raw_video]
+                
+                # 添加水印
+                if watermark_enabled and watermark_text:
+                    # 水印位置偏移
+                    pos_x_offset = 0
+                    pos_y_offset = 0
+                    
+                    # 根据位置设置水印坐标
+                    if watermark_position == "右下角":
+                        position = f"x=w-tw-10{pos_x_offset:+}:y=h-th-10{pos_y_offset:+}"
+                    elif watermark_position == "左下角":
+                        position = f"x=10{pos_x_offset:+}:y=h-th-10{pos_y_offset:+}"
+                    elif watermark_position == "右上角":
+                        position = f"x=w-tw-10{pos_x_offset:+}:y=10{pos_y_offset:+}"
+                    elif watermark_position == "左上角":
+                        position = f"x=10{pos_x_offset:+}:y=10{pos_y_offset:+}"
+                    else:  # 居中
+                        position = f"x=(w-tw)/2{pos_x_offset:+}:y=(h-th)/2{pos_y_offset:+}"
+                    
+                    # 添加水印滤镜
+                    cmd.extend([
+                        "-vf", f"drawtext=fontfile=Arial.ttf:text='{watermark_text}':fontsize={watermark_font_size}:"
+                               f"fontcolor={watermark_color}:alpha=0.7:{position}"
+                    ])
+                
+                # 添加输出文件路径和编码设置
+                cmd.extend([
+                    "-c:v", codec,
+                    "-preset", "medium",
+                    "-profile:v", "high",
+                    "-level", "4.1",
+                    "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    output_path
+                ])
+                
+                # 执行FFmpeg命令
+                logger.info(f"执行FFmpeg命令: {' '.join(cmd)}")
+                try:
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    logger.info(f"FFmpeg命令执行成功: {result.stdout}")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"FFmpeg命令执行失败: {e.stderr}")
+                    return False
+                except Exception as e:
+                    logger.error(f"执行FFmpeg命令时出错: {str(e)}")
+                    return False
+                finally:
+                    # 删除临时文件
+                    if os.path.exists(temp_raw_video):
+                        try:
+                            os.remove(temp_raw_video)
+                        except Exception as e:
+                            logger.warning(f"删除临时文件失败: {str(e)}")
+                    
+                    # 尝试删除临时目录
+                    try:
+                        if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                            os.rmdir(temp_dir)
+                    except Exception as e:
+                        logger.warning(f"删除临时目录失败: {str(e)}")
+            
+            # 计算处理时间
+            end_time = time.time()
+            process_time = end_time - start_time
+            logger.info(f"视频处理完成，耗时: {process_time:.2f}秒")
+            
+            return True
+        except Exception as e:
+            logger.error(f"视频合成过程中出错: {str(e)}")
+            return False
+        finally:
+            # 清理资源
+            for resource in open_resources:
+                try:
+                    resource.close()
+                except Exception as e:
+                    logger.warning(f"关闭资源失败: {str(e)}")
+    
+    def _get_video_files(self, folder_path: str) -> List[str]:
+        """
+        获取文件夹中的视频文件
+        
+        Args:
+            folder_path: 文件夹路径
+            
+        Returns:
+            List[str]: 视频文件路径列表
+        """
+        video_files = []
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            for root, _, files in os.walk(folder_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if self._is_video_file(file_path):
+                        video_files.append(file_path)
+        return video_files
+    
+    def _get_audio_files(self, folder_path: str) -> List[str]:
+        """
+        获取文件夹中的音频文件
+        
+        Args:
+            folder_path: 文件夹路径
+            
+        Returns:
+            List[str]: 音频文件路径列表
+        """
+        audio_files = []
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            for root, _, files in os.walk(folder_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if self._is_audio_file(file_path):
+                        audio_files.append(file_path)
+        return audio_files
