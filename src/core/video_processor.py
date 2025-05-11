@@ -74,8 +74,10 @@ class VideoProcessor:
         
         # 初始化日志
         global logger
+        self.logger = logger  # 将全局logger赋值给实例变量
         if not logger:
             logger = logging.getLogger("VideoProcessor")
+            self.logger = logger
         
         # 检查FFmpeg
         self._check_ffmpeg()
@@ -427,23 +429,13 @@ class VideoProcessor:
     
     def _scan_material_folders(self, material_folders: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         """
-        扫描素材文件夹，获取视频和配音文件
-        
-        支持三种导入模式：
-        1. 直接导入独立场景文件夹（原有模式）
-        2. 导入父文件夹，从中提取按顺序排列的子文件夹作为场景（新模式）
-        3. 混合模式：支持同一父文件夹下同时包含普通子文件夹和快捷方式子文件夹
-        
-        快捷方式支持：
-        - 支持Windows快捷方式(.lnk文件)作为子文件夹
-        - 自动解析快捷方式指向的实际目标文件夹
-        - 支持同一父文件夹下混合普通文件夹和快捷方式
+        扫描素材文件夹，获取所有视频和配音文件
         
         Args:
             material_folders: 素材文件夹信息列表
             
         Returns:
-            Dict[str, Dict[str, Any]]: 素材数据，按子文件夹顺序排列
+            Dict[str, Dict[str, Any]]: 素材数据字典
         """
         # 导入解析快捷方式的函数
         from src.utils.file_utils import resolve_shortcut
@@ -460,7 +452,7 @@ class VideoProcessor:
             extract_mode = folder_info.get("extract_mode", "single_video")
             
             if not folder_path or not os.path.exists(folder_path):
-                self.logger.warning(f"素材文件夹不存在: {folder_path}")
+                logger.warning(f"素材文件夹不存在: {folder_path}")
                 continue
                 
             self.report_progress(f"扫描素材文件夹: {folder_name}", 1 + progress_per_folder * idx)
@@ -468,7 +460,7 @@ class VideoProcessor:
             # 检查是否是多视频拼接模式
             if extract_mode == "multi_video":
                 # 多视频拼接模式：直接将素材文件夹作为一个场景
-                self.logger.info(f"使用多视频拼接模式处理素材: {folder_path}")
+                logger.info(f"使用多视频拼接模式处理素材: {folder_path}")
                 
                 # 初始化场景数据
                 segment_key = f"01_{folder_name}"
@@ -489,7 +481,7 @@ class VideoProcessor:
                 
             else:
                 # 单视频模式：检查是否有子文件夹
-                self.logger.info(f"使用单视频模式处理素材: {folder_path}")
+                logger.info(f"使用单视频模式处理素材: {folder_path}")
                 
                 # 获取所有子文件夹，包括普通文件夹和快捷方式
                 sub_folders = []
@@ -505,7 +497,7 @@ class VideoProcessor:
                                 try:
                                     item = item.decode('gbk')
                                 except UnicodeDecodeError:
-                                    self.logger.error(f"无法解码文件名: {item}")
+                                    logger.error(f"无法解码文件名: {item}")
                                     continue
                         
                         item_path = os.path.join(folder_path, item)
@@ -514,14 +506,14 @@ class VideoProcessor:
                         
                         # 检查是否是快捷方式
                         if item.lower().endswith('.lnk'):
-                            self.logger.debug(f"发现可能的快捷方式: {item_path}")
+                            logger.debug(f"发现可能的快捷方式: {item_path}")
                             shortcut_target = resolve_shortcut(item_path)
                             if shortcut_target and os.path.isdir(shortcut_target):
                                 actual_path = shortcut_target
                                 is_shortcut = True
-                                self.logger.info(f"解析快捷方式成功: {item_path} -> {actual_path}")
+                                logger.info(f"解析快捷方式成功: {item_path} -> {actual_path}")
                             else:
-                                self.logger.warning(f"无法解析快捷方式或目标不是目录: {item_path}")
+                                logger.warning(f"无法解析快捷方式或目标不是目录: {item_path}")
                                 continue
                                 
                         # 检查是否是文件夹
@@ -555,14 +547,14 @@ class VideoProcessor:
                                                     try:
                                                         sub_item = sub_item.decode('gbk')
                                                     except UnicodeDecodeError:
-                                                        self.logger.error(f"无法解码文件名: {sub_item}")
+                                                        logger.error(f"无法解码文件名: {sub_item}")
                                                         continue
                                             
                                             if sub_item.lower().endswith('.lnk') and "视频" in sub_item:
                                                 has_video = True
                                                 break
                                     except Exception as e:
-                                        self.logger.error(f"搜索视频快捷方式时出错: {str(e)}")
+                                        logger.error(f"搜索视频快捷方式时出错: {str(e)}")
                             
                             # 检查是否有配音快捷方式
                             if not has_audio:
@@ -589,14 +581,14 @@ class VideoProcessor:
                                                     try:
                                                         sub_item = sub_item.decode('gbk')
                                                     except UnicodeDecodeError:
-                                                        self.logger.error(f"无法解码文件名: {sub_item}")
+                                                        logger.error(f"无法解码文件名: {sub_item}")
                                                         continue
                                             
                                             if sub_item.lower().endswith('.lnk') and "配音" in sub_item:
                                                 has_audio = True
                                                 break
                                     except Exception as e:
-                                        self.logger.error(f"搜索配音快捷方式时出错: {str(e)}")
+                                        logger.error(f"搜索配音快捷方式时出错: {str(e)}")
                             
                             # 如果有视频或配音子文件夹，则添加到子文件夹列表
                             if has_video or has_audio:
@@ -607,12 +599,12 @@ class VideoProcessor:
                                     "original_path": item_path
                                 })
                 except Exception as e:
-                    self.logger.error(f"扫描子文件夹时出错: {str(e)}")
+                    logger.error(f"扫描子文件夹时出错: {str(e)}")
                     continue
                 
                 # 如果没有找到子文件夹，则直接使用当前文件夹
                 if not sub_folders:
-                    self.logger.info(f"未找到有效的子文件夹，直接使用当前文件夹: {folder_path}")
+                    logger.info(f"未找到有效的子文件夹，直接使用当前文件夹: {folder_path}")
                     
                     # 初始化场景数据
                     segment_key = f"01_{folder_name}"
@@ -670,7 +662,7 @@ class VideoProcessor:
                             # 扫描视频文件夹
                             self._scan_media_folder(sub_path, segment_key, material_data)
                         except Exception as e:
-                            self.logger.error(f"扫描段落 {sub_display_name} 时出错: {str(e)}")
+                            logger.error(f"扫描段落 {sub_display_name} 时出错: {str(e)}")
         
         return material_data
     
@@ -2595,7 +2587,7 @@ class VideoProcessor:
             
             return 0, 0
         except Exception as e:
-            self.logger.error(f"获取视频尺寸失败: {e}")
+            logger.error(f"获取视频尺寸失败: {e}")
             return 0, 0
 
     def _check_video_file(self, video_path):
@@ -2617,14 +2609,22 @@ class VideoProcessor:
             
             return False
         except Exception as e:
-            self.logger.warning(f"ffprobe检查视频失败: {e}")
+            logger.warning(f"ffprobe检查视频失败: {e}")
             return False
 
     def _process_folder_shortcuts(self, folder_path):
-        """处理文件夹中的快捷方式，解析视频和配音文件夹的快捷方式"""
+        """
+        处理文件夹中的快捷方式
+        
+        Args:
+            folder_path: 文件夹路径
+            
+        Returns:
+            Dict: 包含处理后的文件夹路径信息
+        """
+        # 导入解析快捷方式的函数
         from src.utils.file_utils import resolve_shortcut
         
-        # 初始化返回结果
         result = {
             "video_folder": os.path.join(folder_path, "视频"),
             "audio_folder": os.path.join(folder_path, "配音"),
@@ -2634,7 +2634,7 @@ class VideoProcessor:
         
         # 检查视频文件夹是否存在，如果不存在则尝试查找快捷方式
         if not os.path.exists(result["video_folder"]) or not os.path.isdir(result["video_folder"]):
-            self.logger.debug(f"常规视频文件夹不存在，尝试寻找快捷方式: {result['video_folder']}")
+            logger.debug(f"常规视频文件夹不存在，尝试寻找快捷方式: {result['video_folder']}")
             
             # 检查所有可能的命名格式
             video_shortcut_candidates = [
@@ -2655,7 +2655,7 @@ class VideoProcessor:
                                 try:
                                     item = item.decode('gbk')
                                 except UnicodeDecodeError:
-                                    self.logger.error(f"无法解码文件名: {item}")
+                                    logger.error(f"无法解码文件名: {item}")
                                     continue
                         
                         if item.lower().endswith('.lnk') and "视频" in item:
@@ -2663,15 +2663,15 @@ class VideoProcessor:
                             if shortcut_path not in video_shortcut_candidates:
                                 video_shortcut_candidates.append(shortcut_path)
                 except Exception as e:
-                    self.logger.error(f"搜索视频快捷方式时出错: {str(e)}")
+                    logger.error(f"搜索视频快捷方式时出错: {str(e)}")
             
             # 检查所有候选快捷方式
             for shortcut_path in video_shortcut_candidates:
                 if os.path.exists(shortcut_path):
-                    self.logger.info(f"发现视频文件夹快捷方式: {shortcut_path}")
+                    logger.info(f"发现视频文件夹快捷方式: {shortcut_path}")
                     target_path = resolve_shortcut(shortcut_path)
                     if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                        self.logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
                         result["video_folder_paths"] = [target_path]
                         break
         else:
@@ -2679,7 +2679,7 @@ class VideoProcessor:
         
         # 检查配音文件夹是否存在，如果不存在则尝试查找快捷方式
         if not os.path.exists(result["audio_folder"]) or not os.path.isdir(result["audio_folder"]):
-            self.logger.debug(f"常规配音文件夹不存在，尝试寻找快捷方式: {result['audio_folder']}")
+            logger.debug(f"常规配音文件夹不存在，尝试寻找快捷方式: {result['audio_folder']}")
             
             # 检查所有可能的命名格式
             audio_shortcut_candidates = [
@@ -2700,7 +2700,7 @@ class VideoProcessor:
                                 try:
                                     item = item.decode('gbk')
                                 except UnicodeDecodeError:
-                                    self.logger.error(f"无法解码文件名: {item}")
+                                    logger.error(f"无法解码文件名: {item}")
                                     continue
                         
                         if item.lower().endswith('.lnk') and "配音" in item:
@@ -2708,15 +2708,15 @@ class VideoProcessor:
                             if shortcut_path not in audio_shortcut_candidates:
                                 audio_shortcut_candidates.append(shortcut_path)
                 except Exception as e:
-                    self.logger.error(f"搜索配音快捷方式时出错: {str(e)}")
+                    logger.error(f"搜索配音快捷方式时出错: {str(e)}")
             
             # 检查所有候选快捷方式
             for shortcut_path in audio_shortcut_candidates:
                 if os.path.exists(shortcut_path):
-                    self.logger.info(f"发现配音文件夹快捷方式: {shortcut_path}")
+                    logger.info(f"发现配音文件夹快捷方式: {shortcut_path}")
                     target_path = resolve_shortcut(shortcut_path)
                     if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                        self.logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
                         result["audio_folder_paths"] = [target_path]
                         break
         else:
@@ -3048,3 +3048,31 @@ class VideoProcessor:
                     if self._is_audio_file(file_path):
                         audio_files.append(file_path)
         return audio_files
+    
+    def _is_video_file(self, file_path: str) -> bool:
+        """
+        判断文件是否为视频文件
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            bool: 是否为视频文件
+        """
+        video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+        _, ext = os.path.splitext(file_path.lower())
+        return ext in video_extensions
+    
+    def _is_audio_file(self, file_path: str) -> bool:
+        """
+        判断文件是否为音频文件
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            bool: 是否为音频文件
+        """
+        audio_extensions = ['.mp3', '.wav', '.aac', '.ogg', '.flac', '.m4a']
+        _, ext = os.path.splitext(file_path.lower())
+        return ext in audio_extensions
