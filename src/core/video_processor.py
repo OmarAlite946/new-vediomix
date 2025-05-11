@@ -292,135 +292,95 @@ class VideoProcessor:
                       count: int = 1, 
                       bgm_path: str = None) -> Tuple[List[str], str]:
         """
-        批量处理多个素材文件夹
+        批量处理视频
         
         Args:
-            material_folders: 素材文件夹列表，每个元素是一个字典，包含路径和名称
+            material_folders: 素材文件夹信息列表
             output_dir: 输出目录
-            count: 每个素材文件夹生成的视频数量
+            count: 要生成的视频数量
             bgm_path: 背景音乐路径
             
         Returns:
-            Tuple[List[str], str]: 生成的视频文件路径列表和总处理时间
+            Tuple[List[str], str]: 生成的视频文件路径列表和总用时
         """
-        if not material_folders:
-            logger.error("没有提供素材文件夹")
-            return [], "0:00:00"
-            
-        if not output_dir:
-            logger.error("没有提供输出目录")
-            return [], "0:00:00"
-            
-        # 确保输出目录存在
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # 记录开始时间
-        start_time = time.time()
-        
-        # 生成的视频文件路径列表
+        self.stop_requested = False
         output_videos = []
         
-        # 总共需要处理的素材文件夹数量
-        total_folders = len(material_folders)
+        # 开始计时
+        self.start_time = time.time()
         
-        # 处理每个素材文件夹
-        for idx, folder_info in enumerate(material_folders):
-            folder_path = folder_info["path"]
-            folder_name = folder_info.get("name", os.path.basename(folder_path))
-            
-            # 检查素材文件夹是否存在
-            if not os.path.exists(folder_path):
-                logger.warning(f"素材文件夹不存在: {folder_path}")
-                continue
-                
-            # 更新进度
-            progress_percent = (idx / total_folders) * 100
-            self.report_progress(f"正在处理素材 {idx+1}/{total_folders}: {folder_name}", progress_percent)
-            
-            # 使用_process_folder_shortcuts方法处理文件夹中的快捷方式
-            folder_paths = self._process_folder_shortcuts(folder_path)
-            video_folder_paths = folder_paths["video_folder_paths"]
-            audio_folder_paths = folder_paths["audio_folder_paths"]
-            
-            # 检查是否有视频文件夹
-            if not video_folder_paths:
-                logger.warning(f"素材 '{folder_name}' 中没有找到视频文件夹")
-                continue
-                
-            # 检查是否有配音文件夹
-            if not audio_folder_paths:
-                logger.warning(f"素材 '{folder_name}' 中没有找到配音文件夹")
-                continue
-                
-            # 获取视频和配音文件
-            video_files = []
-            for video_folder in video_folder_paths:
-                try:
-                    video_files.extend(self._get_video_files(video_folder))
-                except Exception as e:
-                    logger.error(f"获取视频文件时出错: {str(e)}")
-            
-            audio_files = []
-            for audio_folder in audio_folder_paths:
-                try:
-                    audio_files.extend(self._get_audio_files(audio_folder))
-                except Exception as e:
-                    logger.error(f"获取配音文件时出错: {str(e)}")
-            
-            # 检查是否有视频文件
-            if not video_files:
-                logger.warning(f"素材 '{folder_name}' 中没有找到视频文件")
-                continue
-                
-            # 检查是否有配音文件
-            if not audio_files:
-                logger.warning(f"素材 '{folder_name}' 中没有找到配音文件")
-                continue
-                
-            # 为每个配音文件生成视频
-            for i in range(min(count, len(audio_files))):
-                if i >= len(audio_files):
-                    logger.warning(f"素材 '{folder_name}' 中配音文件不足，只处理 {len(audio_files)} 个")
-                    break
-                    
-                # 选择配音文件
-                audio_file = audio_files[i]
-                
-                # 生成输出文件名
-                output_filename = f"{folder_name}_{i+1}.mp4"
-                output_path = os.path.join(output_dir, output_filename)
-                
-                # 更新进度
-                sub_progress = ((idx + (i+1)/count) / total_folders) * 100
-                self.report_progress(f"正在处理素材 {idx+1}/{total_folders}: {folder_name} - 视频 {i+1}/{count}", sub_progress)
-                
-                try:
-                    # 生成视频
-                    success = self.compose_video(
-                        video_files=video_files,
-                        audio_file=audio_file,
-                        output_path=output_path,
-                        bgm_path=bgm_path
-                    )
-                    
-                    if success:
-                        output_videos.append(output_path)
-                        logger.info(f"成功生成视频: {output_path}")
-                    else:
-                        logger.error(f"生成视频失败: {output_path}")
-                except Exception as e:
-                    logger.error(f"处理视频时出错: {str(e)}")
+        # 扫描素材文件夹
+        self.report_progress("开始扫描素材文件夹...", 0)
         
-        # 计算总处理时间
-        end_time = time.time()
-        total_time = end_time - start_time
+        try:
+            material_data = self._scan_material_folders(material_folders)
+        except Exception as e:
+            logger.error(f"扫描素材文件夹失败: {str(e)}")
+            raise
         
-        # 格式化处理时间
-        hours, remainder = divmod(total_time, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        time_str = f"{int(hours)}:{int(minutes):02d}:{int(seconds):02d}"
+        # 检查是否找到素材
+        if not material_data:
+            error_msg = "没有找到可用的素材文件"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         
-        return output_videos, time_str
+        # 检查每个文件夹是否有视频
+        for folder_name, data in material_data.items():
+            if not data.get("videos", []):
+                logger.warning(f"场景 '{folder_name}' 中没有找到视频文件")
+        
+        self.report_progress("素材扫描完成，开始生成视频...", 5)
+        
+        # 生成多个视频
+        output_videos = []
+        
+        # 计算每个视频的进度百分比
+        progress_per_video = 90.0 / count if count > 0 else 0
+        
+        # 添加当前时间戳到文件名，避免覆盖之前的文件
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        
+        # 生成视频文件
+        for i in range(count):
+            if self.stop_requested:
+                logger.info("收到停止请求，中断视频批量处理")
+                break
+            
+            # 构建输出文件路径
+            output_filename = f"合成视频_{timestamp}_{i+1}.mp4"
+            output_path = os.path.join(output_dir, output_filename)
+            
+            # 设置该视频的进度范围
+            progress_start = 5 + i * progress_per_video
+            progress_end = 5 + (i + 1) * progress_per_video
+            
+            self.report_progress(f"正在生成第 {i+1}/{count} 个视频...", progress_start)
+            
+            try:
+                # 处理单个视频
+                result_path = self._process_single_video(
+                    material_data, 
+                    output_path, 
+                    bgm_path,
+                    progress_start,
+                    progress_end
+                )
+                
+                output_videos.append(result_path)
+                logger.info(f"第 {i+1}/{count} 个视频生成完成: {result_path}")
+            except Exception as e:
+                logger.error(f"生成第 {i+1}/{count} 个视频时出错: {str(e)}")
+                # 继续处理下一个视频
+                continue
+        
+        # 计算总用时
+        total_time = time.time() - self.start_time
+        total_time_str = self._format_time(total_time)
+        
+        self.report_progress(f"批量视频处理完成，成功生成: {len(output_videos)}/{count}，总用时: {total_time_str}", 100)
+        logger.info(f"批量视频处理完成，成功生成: {len(output_videos)}/{count}，总用时: {total_time_str}")
+        
+        return output_videos, total_time_str
     
     def stop_processing(self):
         """停止处理"""
