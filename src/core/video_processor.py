@@ -2886,79 +2886,84 @@ class VideoProcessor:
             if os.path.exists(temp_raw_video):
                 # 获取水印设置
                 watermark_enabled = self.settings.get("watermark_enabled", False)
-                watermark_text = self._get_watermark_text()
-                watermark_position = self.settings.get("watermark_position", "右下角")
-                font_size = self.settings.get("watermark_size", 24)
-                watermark_color = self.settings.get("watermark_color", "white")
                 
                 # 获取FFmpeg命令路径
                 ffmpeg_cmd = self._get_ffmpeg_cmd()
                 
-                # 构建FFmpeg命令
+                # 构建基本的FFmpeg命令
                 cmd = [ffmpeg_cmd, "-y", "-i", temp_raw_video]
                 
-                # 添加水印
-                if watermark_enabled and watermark_text:
-                    # 水印位置偏移
-                    pos_x_offset = self.settings.get("watermark_pos_x", 0)
-                    pos_y_offset = self.settings.get("watermark_pos_y", 0)
-                    
-                    # 根据位置设置水印坐标
-                    if watermark_position == "右下角":
-                        position = f"x=w-tw-10{pos_x_offset:+}:y=h-th-10{pos_y_offset:+}"
-                    elif watermark_position == "左下角":
-                        position = f"x=10{pos_x_offset:+}:y=h-th-10{pos_y_offset:+}"
-                    elif watermark_position == "右上角":
-                        position = f"x=w-tw-10{pos_x_offset:+}:y=10{pos_y_offset:+}"
-                    elif watermark_position == "左上角":
-                        position = f"x=10{pos_x_offset:+}:y=10{pos_y_offset:+}"
-                    else:  # 居中
-                        position = f"x=(w-tw)/2{pos_x_offset:+}:y=(h-th)/2{pos_y_offset:+}"
-                    
-                    # 添加水印滤镜
+                # 根据是否启用水印分别处理
+                if watermark_enabled:
+                    # 创建带水印的临时文件路径
+                    watermarked_output = self._create_temp_file("watermarked", ".mp4")
+                    # 先生成不带水印的视频
                     cmd.extend([
-                        "-vf", f"drawtext=fontfile=Arial.ttf:text='{watermark_text}':fontsize={font_size}:"
-                               f"fontcolor={watermark_color}:alpha=0.7:{position}"
+                        "-c:v", codec,
+                        "-preset", "medium",
+                        "-profile:v", "high",
+                        "-level", "4.1",
+                        "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        watermarked_output
                     ])
-                
-                # 添加输出文件路径和编码设置
-                cmd.extend([
-                    "-c:v", codec,
-                    "-preset", "medium",
-                    "-profile:v", "high",
-                    "-level", "4.1",
-                    "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart",
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    output_path
-                ])
-                
-                # 执行FFmpeg命令
-                logger.info(f"执行FFmpeg命令: {' '.join(cmd)}")
-                try:
-                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-                    logger.info(f"FFmpeg命令执行成功: {result.stdout}")
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"FFmpeg命令执行失败: {e.stderr}")
-                    return False
-                except Exception as e:
-                    logger.error(f"执行FFmpeg命令时出错: {str(e)}")
-                    return False
-                finally:
-                    # 删除临时文件
-                    if os.path.exists(temp_raw_video):
-                        try:
-                            os.remove(temp_raw_video)
-                        except Exception as e:
-                            logger.warning(f"删除临时文件失败: {str(e)}")
                     
-                    # 尝试删除临时目录
+                    # 执行FFmpeg命令生成中间文件
+                    logger.info(f"执行FFmpeg命令生成中间文件: {' '.join(cmd)}")
                     try:
-                        if os.path.exists(temp_dir) and not os.listdir(temp_dir):
-                            os.rmdir(temp_dir)
+                        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                        
+                        # 如果中间文件生成成功，添加水印
+                        if os.path.exists(watermarked_output):
+                            # 添加水印到中间文件，并输出到最终文件
+                            watermark_success = self._add_watermark_to_video(watermarked_output, output_path)
+                            
+                            # 清理中间文件
+                            try:
+                                os.remove(watermarked_output)
+                            except Exception as e:
+                                logger.warning(f"删除中间文件失败: {str(e)}")
+                                
+                            if not watermark_success:
+                                logger.warning("水印添加失败，将使用无水印版本")
+                                # 直接复制中间文件到输出路径
+                                shutil.copy2(watermarked_output, output_path)
+                        else:
+                            logger.error("中间文件生成失败")
+                            return False
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"FFmpeg命令执行失败: {e.stderr}")
+                        return False
                     except Exception as e:
-                        logger.warning(f"删除临时目录失败: {str(e)}")
+                        logger.error(f"执行FFmpeg命令时出错: {str(e)}")
+                        return False
+                else:
+                    # 不添加水印，直接导出
+                    cmd.extend([
+                        "-c:v", codec,
+                        "-preset", "medium",
+                        "-profile:v", "high",
+                        "-level", "4.1",
+                        "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        output_path
+                    ])
+                    
+                    # 执行FFmpeg命令
+                    logger.info(f"执行FFmpeg命令: {' '.join(cmd)}")
+                    try:
+                        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                        logger.info(f"FFmpeg命令执行成功: {result.stdout}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"FFmpeg命令执行失败: {e.stderr}")
+                        return False
+                    except Exception as e:
+                        logger.error(f"执行FFmpeg命令时出错: {str(e)}")
+                        return False
             
             # 计算处理时间
             end_time = time.time()
@@ -2976,6 +2981,23 @@ class VideoProcessor:
                     resource.close()
                 except Exception as e:
                     logger.warning(f"关闭资源失败: {str(e)}")
+            
+            # 清理临时文件
+            if 'temp_raw_video' in locals() and os.path.exists(temp_raw_video):
+                try:
+                    os.remove(temp_raw_video)
+                    logger.debug(f"已删除临时文件: {temp_raw_video}")
+                except Exception as e:
+                    logger.warning(f"删除临时文件失败: {str(e)}")
+            
+            # 清理临时目录
+            if 'temp_dir' in locals() and os.path.exists(temp_dir):
+                try:
+                    if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                        os.rmdir(temp_dir)
+                        logger.debug(f"已删除空临时目录: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"删除临时目录失败: {str(e)}")
     
     def _get_video_files(self, folder_path: str) -> List[str]:
         """
