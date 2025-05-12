@@ -21,7 +21,8 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QProgressBar, QApplication,
     QTabWidget, QCheckBox, QMessageBox, QStatusBar,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QMenu, QAction, QToolButton, QFrame, QSplitter, QInputDialog
+    QMenu, QAction, QToolButton, QFrame, QSplitter, QInputDialog,
+    QDialog, QDialogButtonBox, QStyle
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, pyqtSlot, QSize, QMetaObject, Q_ARG,
@@ -294,6 +295,24 @@ class BatchWindow(QMainWindow):
         self.btn_select_all = QPushButton("全选")
         self.btn_select_all.clicked.connect(self._on_select_all)
         
+        # 添加模板选择器按钮
+        self.btn_template_selector = QPushButton("模板选择器")
+        self.btn_template_selector.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.btn_template_selector.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
+        self.btn_template_selector.setToolTip("打开大型模板选择窗口，方便勾选多个模板")
+        self.btn_template_selector.clicked.connect(self._open_template_selector)
+        
         # 添加批量刷新素材数量按钮
         self.btn_refresh_counts = QPushButton("批量刷新素材数量")
         self.btn_refresh_counts.setStyleSheet("""
@@ -346,6 +365,7 @@ class BatchWindow(QMainWindow):
         self.btn_stop_batch.clicked.connect(self._on_stop_batch)
         
         batch_buttons.addWidget(self.btn_select_all)
+        batch_buttons.addWidget(self.btn_template_selector)
         batch_buttons.addWidget(self.btn_refresh_counts)
         batch_buttons.addStretch(1)
         batch_buttons.addWidget(self.btn_start_batch)
@@ -635,6 +655,9 @@ class BatchWindow(QMainWindow):
             # 保存tab_index到复选框的属性中，以便在选择时正确对应
             checkbox.setProperty("tab_index", row)
             
+            # 连接复选框状态变化信号
+            checkbox.stateChanged.connect(self._on_checkbox_state_changed)
+            
             self.tasks_table.setCellWidget(row, 0, checkbox_container)
             
             # 模板名称
@@ -681,6 +704,31 @@ class BatchWindow(QMainWindow):
         # 如果有统计信息，在状态栏显示
         if self.total_processed_count > 0:
             self.statusBar.showMessage(f"总计: 处理了 {self.total_processed_count} 个视频，总耗时 {self._format_time(self.total_process_time)}")
+            
+        # 更新队列信息：未开始批处理时，显示选中的模板数量
+        if not self.is_processing:
+            self._update_queue_display()
+    
+    def _update_queue_display(self):
+        """更新队列显示信息"""
+        if self.is_processing:
+            return
+        
+        selected_count = 0
+        for row in range(self.tasks_table.rowCount()):
+            checkbox_container = self.tasks_table.cellWidget(row, 0)
+            if checkbox_container:
+                checkbox = checkbox_container.findChild(QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    selected_count += 1
+        
+        self.label_queue.setText(f"队列: 0/{selected_count}")
+        logger.debug(f"更新队列显示信息: 0/{selected_count}")
+    
+    def _on_checkbox_state_changed(self, state):
+        """处理复选框状态变化"""
+        if not self.is_processing:
+            self._update_queue_display()
     
     def _format_time(self, seconds):
         """将秒数格式化为时分秒"""
@@ -703,18 +751,32 @@ class BatchWindow(QMainWindow):
             return
             
         # 检查第一个复选框的状态，并据此切换所有复选框
-        first_checkbox = self.tasks_table.cellWidget(0, 0)
-        if isinstance(first_checkbox, QCheckBox):
-            new_state = not first_checkbox.isChecked()
-            
-            # 更新所有复选框
-            for row in range(self.tasks_table.rowCount()):
-                checkbox = self.tasks_table.cellWidget(row, 0)
-                if isinstance(checkbox, QCheckBox):
-                    checkbox.setChecked(new_state)
-            
-            # 更新按钮文本
-            self.btn_select_all.setText("取消全选" if new_state else "全选")
+        first_checkbox_container = self.tasks_table.cellWidget(0, 0)
+        if first_checkbox_container:
+            first_checkbox = first_checkbox_container.findChild(QCheckBox)
+            if first_checkbox:
+                new_state = not first_checkbox.isChecked()
+                
+                # 更新所有复选框
+                for row in range(self.tasks_table.rowCount()):
+                    checkbox_container = self.tasks_table.cellWidget(row, 0)
+                    if checkbox_container:
+                        checkbox = checkbox_container.findChild(QCheckBox)
+                        if checkbox:
+                            checkbox.setChecked(new_state)
+                
+                # 更新按钮文本
+                self.btn_select_all.setText("取消全选" if new_state else "全选")
+                
+                # 更新队列显示
+                selected_count = self.tasks_table.rowCount() if new_state else 0
+                self.label_queue.setText(f"队列: 0/{selected_count}")
+                
+                # 更新状态栏显示
+                if new_state:
+                    self.statusBar.showMessage(f"已选择全部 {selected_count} 个模板", 3000)
+                else:
+                    self.statusBar.showMessage("已取消选择所有模板", 3000)
     
     def _on_refresh_all_counts(self):
         """批量刷新所有模板的素材数量"""
@@ -1480,4 +1542,203 @@ class BatchWindow(QMainWindow):
             self.template_state.save_template_tabs(self.tabs)
             logger.info(f"已保存 {len(self.tabs)} 个模板状态")
         except Exception as e:
-            logger.error(f"保存模板状态时出错: {str(e)}") 
+            logger.error(f"保存模板状态时出错: {str(e)}")
+    
+    def _open_template_selector(self):
+        """打开模板选择器大窗口"""
+        try:
+            # 创建模板选择器对话框
+            selector = TemplateSelector(self.tabs, parent=self)
+            
+            # 显示对话框
+            if selector.exec_() == QDialog.Accepted:
+                # 获取用户选择的模板
+                selected_templates = selector.get_selected_templates()
+                
+                # 显示选择结果
+                if selected_templates:
+                    self.statusBar.showMessage(f"已选择 {len(selected_templates)} 个模板进行批处理", 3000)
+                else:
+                    self.statusBar.showMessage("未选择任何模板", 3000)
+        except Exception as e:
+            logger.error(f"打开模板选择器时出错: {str(e)}")
+            QMessageBox.warning(self, "错误", f"打开模板选择器时出错: {str(e)}")
+
+# 新增模板选择器对话框类
+class TemplateSelector(QDialog):
+    """模板选择器对话框，提供一个更大的窗口来选择要批处理的模板"""
+    
+    def __init__(self, templates, parent=None):
+        super().__init__(parent)
+        self.templates = templates
+        # 获取已经在表格中选中的模板名称
+        self.batch_window = parent
+        self.selected_templates = []
+        # 从表格中获取当前选中的模板
+        if hasattr(self.batch_window, 'tasks_table'):
+            for row in range(self.batch_window.tasks_table.rowCount()):
+                checkbox_container = self.batch_window.tasks_table.cellWidget(row, 0)
+                if checkbox_container:
+                    checkbox = checkbox_container.findChild(QCheckBox)
+                    if checkbox and checkbox.isChecked() and row < len(templates):
+                        self.selected_templates.append(templates[row].get("name", f"模板{row+1}"))
+        self._init_ui()
+    
+    def _init_ui(self):
+        """初始化UI"""
+        # 设置窗口属性
+        self.setWindowTitle("模板选择器")
+        self.resize(900, 700)
+        
+        # 主布局
+        layout = QVBoxLayout(self)
+        
+        # 说明标签
+        label = QLabel("请选择要批量处理的模板:")
+        layout.addWidget(label)
+        
+        # 创建表格
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["选择", "模板名称", "保存目录", "状态", "最后处理时间"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
+        # 填充表格
+        self._fill_table()
+        
+        layout.addWidget(self.table)
+        
+        # 快捷操作按钮
+        button_layout = QHBoxLayout()
+        
+        select_all_btn = QPushButton("全选")
+        select_all_btn.clicked.connect(self._select_all)
+        button_layout.addWidget(select_all_btn)
+        
+        deselect_all_btn = QPushButton("取消全选")
+        deselect_all_btn.clicked.connect(self._deselect_all)
+        button_layout.addWidget(deselect_all_btn)
+        
+        invert_selection_btn = QPushButton("反选")
+        invert_selection_btn.clicked.connect(self._invert_selection)
+        button_layout.addWidget(invert_selection_btn)
+        
+        layout.addLayout(button_layout)
+        
+        # 确定和取消按钮
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def _fill_table(self):
+        """填充表格数据"""
+        self.table.setRowCount(len(self.templates))
+        
+        for row, tab in enumerate(self.templates):
+            # 创建复选框
+            checkbox = QCheckBox()
+            # 检查模板名称是否在已选列表中
+            template_name = tab.get("name", f"模板{row+1}")
+            checkbox.setChecked(template_name in self.selected_templates)
+            
+            # 创建复选框单元格居中的容器
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # 设置第一列为复选框
+            self.table.setCellWidget(row, 0, checkbox_widget)
+            
+            # 设置其他列
+            self.table.setItem(row, 1, QTableWidgetItem(template_name))
+            self.table.setItem(row, 2, QTableWidgetItem(tab.get("output_dir", "-")))
+            
+            # 状态列
+            status_item = QTableWidgetItem(tab.get("status", "待处理"))
+            
+            # 根据状态设置颜色
+            if tab.get("status") == "完成":
+                status_item.setBackground(QColor("#C8E6C9"))  # 淡绿色
+            elif tab.get("status") == "失败":
+                status_item.setBackground(QColor("#FFCDD2"))  # 淡红色
+            elif tab.get("status") == "处理中":
+                status_item.setBackground(QColor("#FFF9C4"))  # 淡黄色
+            
+            self.table.setItem(row, 3, status_item)
+            
+            # 最后处理时间
+            self.table.setItem(row, 4, QTableWidgetItem(tab.get("last_process_time", "-")))
+        
+        # 自动调整行高
+        self.table.resizeRowsToContents()
+        logger.debug(f"模板选择器初始选中的模板: {self.selected_templates}")
+    
+    def _select_all(self):
+        """全选所有模板"""
+        for row in range(self.table.rowCount()):
+            self._set_checkbox(row, True)
+    
+    def _deselect_all(self):
+        """取消全选"""
+        for row in range(self.table.rowCount()):
+            self._set_checkbox(row, False)
+    
+    def _invert_selection(self):
+        """反向选择"""
+        for row in range(self.table.rowCount()):
+            current_state = self._get_checkbox(row).isChecked()
+            self._set_checkbox(row, not current_state)
+    
+    def _get_checkbox(self, row):
+        """获取指定行的复选框"""
+        checkbox_widget = self.table.cellWidget(row, 0)
+        if checkbox_widget:
+            # 找到QCheckBox子部件
+            return checkbox_widget.findChild(QCheckBox)
+        return None
+    
+    def _set_checkbox(self, row, checked):
+        """设置指定行的复选框状态"""
+        checkbox = self._get_checkbox(row)
+        if checkbox:
+            checkbox.setChecked(checked)
+    
+    def get_selected_templates(self):
+        """获取已选择的模板名称列表"""
+        selected_templates = []
+        for row in range(self.table.rowCount()):
+            checkbox = self._get_checkbox(row)
+            if checkbox and checkbox.isChecked():
+                template_name = self.table.item(row, 1).text()
+                selected_templates.append(template_name)
+        return selected_templates
+    
+    def accept(self):
+        """确定按钮被点击"""
+        # 更新选中的模板
+        self.selected_templates = self.get_selected_templates()
+        logger.info(f"模板选择器确认选择了 {len(self.selected_templates)} 个模板")
+        
+        # 更新批处理窗口中的复选框状态与模板选择器保持一致
+        if hasattr(self.batch_window, 'tasks_table') and self.batch_window.tasks_table:
+            for row in range(self.batch_window.tasks_table.rowCount()):
+                if row < len(self.templates):
+                    checkbox_container = self.batch_window.tasks_table.cellWidget(row, 0)
+                    if checkbox_container:
+                        checkbox = checkbox_container.findChild(QCheckBox)
+                        if checkbox:
+                            template_name = self.templates[row].get("name", f"模板{row+1}")
+                            checkbox.setChecked(template_name in self.selected_templates)
+                            logger.debug(f"更新批处理窗口复选框状态: 模板 {template_name} - {'选中' if template_name in self.selected_templates else '未选中'}")
+            
+            # 更新队列显示信息
+            self.batch_window._update_queue_display()
+        
+        super().accept()
