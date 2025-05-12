@@ -112,7 +112,13 @@ class VideoProcessor:
         # 更新设置
         self.settings = self.default_settings.copy()
         if settings:
+            # 保留原始temp_dir设置
+            original_temp_dir = self.default_settings["temp_dir"]
+            # 更新所有设置
             self.settings.update(settings)
+            # 如果settings中没有提供temp_dir，使用默认的缓存目录
+            if "temp_dir" not in settings:
+                self.settings["temp_dir"] = original_temp_dir
         
         # 确保临时目录存在
         os.makedirs(self.settings["temp_dir"], exist_ok=True)
@@ -2880,9 +2886,9 @@ class VideoProcessor:
             if os.path.exists(temp_raw_video):
                 # 获取水印设置
                 watermark_enabled = self.settings.get("watermark_enabled", False)
-                watermark_text = self.settings.get("watermark_text", "")
+                watermark_text = self._get_watermark_text()
                 watermark_position = self.settings.get("watermark_position", "右下角")
-                watermark_font_size = self.settings.get("watermark_font_size", 24)
+                font_size = self.settings.get("watermark_size", 24)
                 watermark_color = self.settings.get("watermark_color", "white")
                 
                 # 获取FFmpeg命令路径
@@ -2894,8 +2900,8 @@ class VideoProcessor:
                 # 添加水印
                 if watermark_enabled and watermark_text:
                     # 水印位置偏移
-                    pos_x_offset = 0
-                    pos_y_offset = 0
+                    pos_x_offset = self.settings.get("watermark_pos_x", 0)
+                    pos_y_offset = self.settings.get("watermark_pos_y", 0)
                     
                     # 根据位置设置水印坐标
                     if watermark_position == "右下角":
@@ -2911,7 +2917,7 @@ class VideoProcessor:
                     
                     # 添加水印滤镜
                     cmd.extend([
-                        "-vf", f"drawtext=fontfile=Arial.ttf:text='{watermark_text}':fontsize={watermark_font_size}:"
+                        "-vf", f"drawtext=fontfile=Arial.ttf:text='{watermark_text}':fontsize={font_size}:"
                                f"fontcolor={watermark_color}:alpha=0.7:{position}"
                     ])
                 
