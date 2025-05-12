@@ -1173,6 +1173,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             
         self.label_progress.setText(message)
         self.progress_bar.setValue(int(percent))
+        # 更新上次进度更新时间戳
+        self.last_progress_update = time.time()
     
     def detect_gpu(self):
         """检测GPU并更新UI - 优化版"""
@@ -1794,6 +1796,32 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 hardware_accel = False
                 encoder = "libx264"
                 logger.info("使用CPU编码")
+                
+            # 确保清理之前存在的处理器实例
+            if hasattr(self, "processor") and self.processor is not None:
+                logger.info("清理之前存在的视频处理器实例...")
+                try:
+                    # 使用新添加的释放资源方法
+                    if hasattr(self.processor, "release_resources"):
+                        self.processor.release_resources()
+                    else:
+                        # 停止任何正在进行的处理
+                        if hasattr(self.processor, "stop_processing"):
+                            self.processor.stop_processing()
+                        
+                        # 清理临时文件
+                        if hasattr(self.processor, "clean_temp_files"):
+                            self.processor.clean_temp_files()
+                    
+                    # 删除引用
+                    self.processor = None
+                    
+                    # 执行垃圾回收以立即释放内存
+                    import gc
+                    gc.collect()
+                    logger.info("旧视频处理器实例清理完成")
+                except Exception as e:
+                    logger.error(f"清理旧视频处理器实例时出错: {str(e)}")
                 
             # 创建处理器
             settings = {
@@ -4367,6 +4395,38 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         super().showEvent(event)
         # 延迟一点时间再更新，确保界面已经显示完成
         QtCore.QTimer.singleShot(100, self._update_media_counts)
+
+    def force_progress_update(self):
+        """强制更新进度状态，即使视频处理线程卡住了，也能更新时间戳，防止批处理过程被中断"""
+        try:
+            # 直接更新时间戳
+            current_time = time.time()
+            self.last_progress_update = current_time
+            
+            # 尝试获取当前的进度信息
+            current_message = ""
+            if hasattr(self, "label_progress") and self.label_progress:
+                current_message = self.label_progress.text()
+            
+            # 记录强制更新日志
+            logger.info(f"强制更新进度时间戳: {current_time}, 当前信息: {current_message}")
+            
+            # 如果有处理器，尝试获取最后的进度消息
+            if hasattr(self, "processor") and self.processor:
+                last_progress = self.processor.get_last_progress()
+                if last_progress:
+                    message, percent = last_progress
+                    logger.info(f"从处理器获取的最后进度: {message}, {percent}%")
+                    # 立即更新UI
+                    self._do_update_progress(message, percent)
+                    return True
+            
+            return True  # 即使没有获取到进度信息，也视为成功更新
+        except Exception as e:
+            logger.error(f"强制更新进度时出错: {str(e)}")
+            error_detail = traceback.format_exc()
+            logger.error(f"详细错误信息: {error_detail}")
+            return False
 
 class WatermarkPreview(QFrame):
     """水印位置预览控件，允许用户通过拖动调整水印位置"""

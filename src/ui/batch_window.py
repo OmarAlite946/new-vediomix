@@ -2,33 +2,37 @@
 # -*- coding: utf-8 -*-
 
 """
-多模板批量处理窗口
+批量处理窗口
 """
 
 import os
 import sys
 import time
 import json
+import traceback
+import gc
 import logging
 import threading
-import gc
-import traceback
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 
+# 添加项目根目录到 Python 路径
+project_root = Path(__file__).resolve().parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from PyQt5.QtCore import Qt, QTimer, QRect, QSize, pyqtSlot, QObject, QEvent, pyqtSignal, QMetaObject, QThread, Q_ARG
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap, QFont, QResizeEvent, QCursor, QPalette, QBrush, QRadialGradient
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QPushButton, QProgressBar, QApplication,
-    QTabWidget, QCheckBox, QMessageBox, QStatusBar,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QMenu, QAction, QToolButton, QFrame, QSplitter, QInputDialog,
-    QDialog, QDialogButtonBox, QStyle
+    QMainWindow, QApplication, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, 
+    QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
+    QCheckBox, QProgressBar, QRadioButton, QComboBox, QLineEdit, 
+    QFileDialog, QMessageBox, QDialog, QSplitter, QStatusBar, QSpacerItem,
+    QSizePolicy, QFrame, QAbstractItemView, QStyle, QStyleOption, QMenu,
+    QButtonGroup, QScrollArea, QTextEdit, QLayout, QAction, QToolButton,
+    QDialogButtonBox, QInputDialog
 )
-from PyQt5.QtCore import (
-    Qt, pyqtSignal, pyqtSlot, QSize, QMetaObject, Q_ARG,
-    QTimer
-)
-from PyQt5.QtGui import QIcon, QFont, QColor
 
 from src.ui.main_window import MainWindow
 from src.utils.logger import get_logger
@@ -40,6 +44,7 @@ class BatchWindow(QMainWindow):
     """批量处理多个模板的主窗口"""
     
     def __init__(self, parent=None):
+        """初始化批量处理窗口"""
         super().__init__(parent)
         self.setWindowTitle("视频模板批量处理工具")
         self.resize(1200, 800)
@@ -74,6 +79,39 @@ class BatchWindow(QMainWindow):
         # 如果没有加载到已保存的模板，添加一个初始标签页
         if len(self.tabs) == 0:
             self._add_new_tab()
+        
+        # 创建定时器用于刷新UI
+        self.ui_refresh_timer = QTimer(self)
+        self.ui_refresh_timer.timeout.connect(self._periodic_ui_refresh)
+        self.ui_refresh_timer.start(5000)  # 每5秒刷新一次UI
+        
+        logger.info("批量处理窗口初始化完成")
+    
+    def _periodic_ui_refresh(self):
+        """定期刷新UI状态"""
+        try:
+            # 如果当前正在处理任务，则不刷新UI
+            if self.is_processing:
+                return
+                
+            # 检查是否有标签页需要刷新
+            for tab in self.tabs:
+                if "window" in tab and tab["window"] and tab["window"].isVisible():
+                    try:
+                        # 确保标签页内容可见
+                        tab["window"].update()
+                    except Exception as e:
+                        logger.debug(f"定期刷新标签页 '{tab['name']}' 时出错: {str(e)}")
+            
+            # 刷新整个窗口
+            self.update()
+            
+            # 更新任务表格
+            self._update_tasks_table()
+            
+            logger.debug("完成定期UI刷新")
+        except Exception as e:
+            logger.error(f"定期刷新UI时出错: {str(e)}")
     
     def _load_saved_templates(self):
         """加载保存的模板标签页状态"""
@@ -1047,6 +1085,9 @@ class BatchWindow(QMainWindow):
         # 执行垃圾回收
         gc.collect()
         
+        # 刷新所有标签页显示
+        self._refresh_all_tabs_ui()
+        
         # 记录详细日志
         if current_tab is not None:
             logger.info(f"重置批处理模式，之前处理的标签页索引: {current_tab}")
@@ -1054,6 +1095,46 @@ class BatchWindow(QMainWindow):
             logger.info(f"处理队列已清空，原队列包含: {original_queue}")
         
         logger.info("批处理模式已重置")
+    
+    def _refresh_all_tabs_ui(self):
+        """刷新所有标签页的UI显示"""
+        logger.info("开始刷新所有标签页UI显示")
+        try:
+            # 更新任务表格
+            self._update_tasks_table()
+            
+            # 刷新标签页控件
+            self.tab_widget.update()
+            
+            # 遍历所有标签页，刷新UI
+            for i in range(self.tab_widget.count()):
+                # 获取标签页窗口
+                tab_widget = self.tab_widget.widget(i)
+                if tab_widget:
+                    # 切换到该标签页以确保其可见
+                    self.tab_widget.setCurrentIndex(i)
+                    
+                    # 尝试刷新标签页的UI
+                    try:
+                        # 强制重绘
+                        tab_widget.update()
+                        
+                        # 如果有子窗口，也刷新它们
+                        for child in tab_widget.findChildren(QWidget):
+                            if child and not child.isHidden():
+                                child.update()
+                    except Exception as e:
+                        logger.error(f"刷新标签页 {i} UI时出错: {str(e)}")
+                
+                # 确保Qt事件循环处理绘制事件
+                QApplication.processEvents()
+            
+            # 最后再次更新整个窗口
+            self.update()
+            
+            logger.info("所有标签页UI刷新完成")
+        except Exception as e:
+            logger.error(f"刷新所有标签页UI时出错: {str(e)}")
     
     def _process_next_task(self):
         """处理队列中的下一个任务"""
@@ -1085,6 +1166,100 @@ class BatchWindow(QMainWindow):
             self._reset_batch_ui()
             # 发出提示音（如果启用）
             QApplication.beep()
+            
+            # 强制清理所有标签页的资源
+            try:
+                logger.info("批处理完成，清理所有标签页资源...")
+                # 清理每个标签页的处理器资源
+                for tab in self.tabs:
+                    if "window" in tab and tab["window"]:
+                        window = tab["window"]
+                        if hasattr(window, "processor") and window.processor:
+                            try:
+                                # 使用新添加的资源释放方法
+                                if hasattr(window.processor, "release_resources"):
+                                    logger.info(f"释放标签页 '{tab['name']}' 的处理器资源")
+                                    try:
+                                        # 安全地释放处理器资源，防止清理UI元素
+                                        window.processor.release_resources()
+                                    except Exception as e:
+                                        logger.error(f"使用release_resources方法释放资源时出错: {str(e)}")
+                                elif hasattr(window.processor, "clean_temp_files"):
+                                    # 退化方案：至少清理临时文件
+                                    logger.info(f"使用clean_temp_files备选方案清理标签页 '{tab['name']}' 的临时文件")
+                                    try:
+                                        window.processor.clean_temp_files()
+                                    except Exception as e:
+                                        logger.error(f"使用clean_temp_files方法清理临时文件时出错: {str(e)}")
+                                
+                                # 清空处理器引用
+                                window.processor = None
+                            except Exception as e:
+                                logger.error(f"释放标签页 '{tab['name']}' 资源时出错: {str(e)}")
+                        
+                        # 确保窗口UI元素完好
+                        try:
+                            # 刷新窗口
+                            if hasattr(window, "update"):
+                                window.update()
+                                
+                            # 确保窗口组件可见
+                            for widget_name in ["stackedWidget", "panel_material", "panel_setting", "save_dir_display"]:
+                                if hasattr(window, widget_name):
+                                    widget = getattr(window, widget_name)
+                                    if widget and hasattr(widget, "show"):
+                                        widget.show()
+                                        if hasattr(widget, "update"):
+                                            widget.update()
+                        except Exception as e:
+                            logger.error(f"刷新窗口UI元素时出错: {str(e)}")
+                
+                # 执行一次完整的垃圾回收
+                import gc
+                gc.collect(0)
+                gc.collect(1)
+                gc.collect(2)
+                
+                # 强制执行一次Qt事件处理
+                QApplication.processEvents()
+                
+                # 刷新界面显示
+                self._refresh_all_tabs_ui()
+                
+                logger.info("所有标签页资源清理完成")
+                
+                # 确保所有标签页仍然可见
+                for i, tab in enumerate(self.tabs):
+                    if "window" in tab and tab["window"]:
+                        try:
+                            # 刷新标签页显示
+                            self.tab_widget.setCurrentIndex(i)
+                            QApplication.processEvents()
+                            self.tab_widget.update()
+                            
+                            # 额外确保标签页内容显示正确
+                            tab_widget = self.tab_widget.widget(i)
+                            if tab_widget:
+                                tab_widget.show()
+                                tab_widget.update()
+                        except Exception as e:
+                            logger.error(f"刷新标签页 {tab['name']} 显示时出错: {str(e)}")
+                
+                # 最后再刷新一次整个批处理窗口
+                self.update()
+                QApplication.processEvents()
+                
+                # 使用专门的函数全面刷新所有标签页UI
+                self._refresh_tabs_after_resource_release()
+                
+                # 确保主界面显示正常
+                self.show()
+                self.activateWindow()
+                self.raise_()
+                QApplication.processEvents()
+            except Exception as e:
+                logger.error(f"批处理结束清理资源时出错: {str(e)}")
+                
             return
         
         logger.info(f"处理队列中的下一个任务，当前队列长度: {len(self.processing_queue)}")
@@ -1130,6 +1305,25 @@ class BatchWindow(QMainWindow):
             self._update_tasks_table()
             QTimer.singleShot(100, self._process_next_task)
             return
+        
+        # 在开始新模板前执行一次内存清理，确保系统内存充足
+        try:
+            # 执行内存清理
+            import gc
+            logger.info("在开始新模板前执行内存清理...")
+            before_count = gc.get_count()
+            # 执行完整的垃圾回收
+            gc.collect(0)  # 收集第0代对象
+            gc.collect(1)  # 收集第1代对象
+            gc.collect(2)  # 收集第2代对象
+            after_count = gc.get_count()
+            logger.info(f"内存清理完成: {before_count} -> {after_count}")
+            
+            # 强制执行一次Qt事件处理
+            QApplication.processEvents()
+        except Exception as e:
+            logger.error(f"内存清理过程中出错: {str(e)}")
+            # 错误不应阻止继续进行
         
         # 更新进度条 - 使用实际完成比例
         if total_selected_tasks > 0:
@@ -1234,8 +1428,75 @@ class BatchWindow(QMainWindow):
                         # 处理完成后，立即启动下一个任务
                         logger.info(f"标签页 {next_idx} 处理完成，准备处理下一个任务")
                         
+                        # 确保彻底清理资源，避免内存泄漏
+                        try:
+                            # 1. 关闭视频处理器的所有资源
+                            if hasattr(window, "processor") and window.processor:
+                                # 使用新添加的资源释放方法
+                                if hasattr(window.processor, "release_resources"):
+                                    logger.info("使用release_resources方法释放处理器资源...")
+                                    window.processor.release_resources()
+                                elif hasattr(window.processor, "clean_temp_files"):
+                                    logger.info("开始清理临时文件...")
+                                    window.processor.clean_temp_files()
+                                    if hasattr(window.processor, "stop_processing"):
+                                        window.processor.stop_processing()
+                                # 清空处理器引用
+                                window.processor = None
+                                logger.info("视频处理器已清空")
+                            
+                            # 2. 清空处理线程
+                            if hasattr(window, "processing_thread") and window.processing_thread:
+                                window.processing_thread = None
+                                logger.info("处理线程已清空")
+                            
+                            # 3. 强制执行一次Python垃圾回收
+                            import gc
+                            # 获取当前未回收对象数量
+                            before_count = gc.get_count()
+                            logger.info(f"执行垃圾回收前未回收对象计数: {before_count}")
+                            
+                            # 执行完整的垃圾回收
+                            gc.collect(0)  # 收集第0代对象
+                            gc.collect(1)  # 收集第1代对象
+                            gc.collect(2)  # 收集第2代对象
+                            
+                            # 获取回收后对象数量
+                            after_count = gc.get_count()
+                            logger.info(f"执行垃圾回收后未回收对象计数: {after_count}")
+                            
+                            # 4. 尝试释放其他可能的资源 - 但保留UI界面元素
+                            for attr_name in dir(window):
+                                if attr_name.startswith("__") or attr_name.startswith("ui_"):
+                                    continue  # 跳过UI相关元素
+                                
+                                # 跳过所有QWidget类型的对象，以保留界面元素
+                                attr = getattr(window, attr_name, None)
+                                # 跳过界面相关元素和基本属性
+                                if (attr is None or 
+                                    isinstance(attr, (QWidget, QLayout, QAction, QObject)) or
+                                    attr_name in ['tab_widget', 'menuBar', 'statusBar', 'centralWidget']):
+                                    continue
+                                
+                                # 只关闭明确知道可以关闭的资源类型
+                                if hasattr(attr, "close") and callable(getattr(attr, "close")):
+                                    try:
+                                        getattr(attr, "close")()
+                                        logger.debug(f"已关闭资源: {attr_name}")
+                                    except Exception as e:
+                                        logger.debug(f"关闭资源 {attr_name} 时出错: {str(e)}")
+                            
+                            # 5. 强制执行一次Qt事件处理
+                            QApplication.processEvents()
+                            
+                            logger.info("资源清理完成，系统内存已释放")
+                        except Exception as e:
+                            logger.error(f"清理资源时出错: {str(e)}")
+                            error_detail = traceback.format_exc()
+                            logger.error(f"详细错误信息: {error_detail}")
+                        
                         # 使用短时间延迟调用下一个任务，确保UI有时间更新
-                        QTimer.singleShot(500, self._process_next_task)
+                        QTimer.singleShot(1000, self._process_next_task)  # 延长等待时间到1秒，给系统更多时间释放资源
                     else:
                         # 如果线程仍在运行，再次检查
                         # 为了避免卡住，我们也检查一下是否线程确实在工作
@@ -1246,7 +1507,31 @@ class BatchWindow(QMainWindow):
                             
                             # 增加超时时间到30秒，视频处理可能需要更长时间
                             if time_since_update > 30:  # 如果30秒没有进度更新
-                                logger.warning(f"任务 {tab['name']} 似乎已卡住 (>30秒无进度更新)，尝试重启处理流程")
+                                logger.warning(f"任务 {tab['name']} 似乎已卡住 (>30秒无进度更新)，尝试强制更新进度")
+                                
+                                # 获取此标签页的强制更新尝试次数
+                                force_update_retries = tab.get("force_update_retries", 0)
+                                
+                                # 尝试使用强制更新方法
+                                if force_update_retries < 3 and hasattr(window, "force_progress_update"):
+                                    logger.info(f"尝试强制更新进度状态，第{force_update_retries + 1}次尝试")
+                                    force_update_success = window.force_progress_update()
+                                    
+                                    # 不管结果如何，都增加尝试次数
+                                    tab["force_update_retries"] = force_update_retries + 1
+                                    
+                                    if force_update_success:
+                                        logger.info(f"强制更新进度成功，继续等待处理")
+                                        # 更新上次进度时间以避免立即再次触发
+                                        window.last_progress_update = time.time()
+                                        QTimer.singleShot(5000, check_completion)  # 5秒后再次检查
+                                        return
+                                    else:
+                                        logger.warning(f"强制更新进度失败，尝试启用传统恢复方式")
+                                
+                                # 如果强制更新失败或尝试次数已用完，尝试传统恢复方法
+                                if force_update_retries >= 3:
+                                    logger.warning(f"任务 {tab['name']} 已尝试强制更新 {force_update_retries} 次，仍无响应，判定为超时")
                                 
                                 # 尝试直接调用处理过程来恢复
                                 try:
@@ -1317,6 +1602,9 @@ class BatchWindow(QMainWindow):
             # 确保标签页处于可见状态，切换到相应标签
             self.tab_widget.setCurrentIndex(next_idx)
             QApplication.processEvents()  # 确保UI更新
+            
+            # 重置强制更新重试计数
+            tab["force_update_retries"] = 0
             
             # 启动合成
             try:
@@ -1563,6 +1851,79 @@ class BatchWindow(QMainWindow):
         except Exception as e:
             logger.error(f"打开模板选择器时出错: {str(e)}")
             QMessageBox.warning(self, "错误", f"打开模板选择器时出错: {str(e)}")
+
+    def _refresh_tabs_after_resource_release(self):
+        """在资源释放后刷新所有标签页的UI显示，确保UI保持可见"""
+        try:
+            logger.info("在资源释放后刷新所有标签页UI...")
+            
+            # 首先确保批处理窗口自身显示正常
+            self.update()
+            QApplication.processEvents()
+            
+            # 更新任务表格
+            self._update_tasks_table()
+            
+            # 刷新标签控件
+            self.tab_widget.update()
+            
+            # 遍历所有标签页
+            for i in range(self.tab_widget.count()):
+                try:
+                    # 获取标签页和对应的窗口
+                    tab_widget = self.tab_widget.widget(i)
+                    if not tab_widget:
+                        continue
+                    
+                    # 切换到该标签页
+                    self.tab_widget.setCurrentIndex(i)
+                    QApplication.processEvents()
+                    
+                    # 确保标签页可见
+                    tab_widget.show()
+                    tab_widget.update()
+                    
+                    # 刷新标签页中的窗口
+                    if i < len(self.tabs):
+                        tab = self.tabs[i]
+                        if "window" in tab and tab["window"]:
+                            window = tab["window"]
+                            
+                            # 刷新主窗口
+                            if hasattr(window, "update"):
+                                window.update()
+                                
+                            # 刷新关键UI组件
+                            for widget_name in ["stackedWidget", "panel_material", "panel_setting", 
+                                               "save_dir_display", "material_table", "btn_start"]:
+                                if hasattr(window, widget_name):
+                                    widget = getattr(window, widget_name)
+                                    if widget and hasattr(widget, "show"):
+                                        widget.show()
+                                        if hasattr(widget, "update"):
+                                            widget.update()
+                
+                    # 刷新所有子组件
+                    for child in tab_widget.findChildren(QWidget):
+                        if child and not child.isHidden():
+                            try:
+                                child.show()
+                                child.update()
+                            except Exception as e:
+                                logger.debug(f"刷新子组件时出错: {str(e)}")
+                    
+                    # 处理事件循环
+                    QApplication.processEvents()
+                except Exception as e:
+                    logger.error(f"刷新标签页 {i} 时出错: {str(e)}")
+                
+            # 最后确保整体UI刷新
+            self.update()
+            QApplication.processEvents()
+            
+            logger.info("标签页UI刷新完成")
+        except Exception as e:
+            logger.error(f"刷新标签页UI时出错: {str(e)}")
 
 # 新增模板选择器对话框类
 class TemplateSelector(QDialog):

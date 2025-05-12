@@ -20,6 +20,7 @@ import datetime
 import logging
 import sys
 import json
+import gc
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -258,6 +259,18 @@ class VideoProcessor:
                 logger.error(f"调用进度回调时出错: {str(e)}")
         
         logger.info(f"进度 {percent:.1f}%: {message}")
+    
+    def get_last_progress(self) -> Optional[Tuple[str, float]]:
+        """
+        获取最后一次进度更新的消息和百分比
+        
+        Returns:
+            Tuple[str, float] 或 None: 最后进度消息和百分比的元组，如果没有则返回None
+        """
+        if not self._last_progress_message:
+            return None
+        
+        return (self._last_progress_message, self._last_progress_percent)
     
     def _start_progress_timer(self):
         """启动定期进度更新定时器，防止批处理模式中的超时检测"""
@@ -1727,6 +1740,110 @@ class VideoProcessor:
                 logger.info("临时文件清理完成")
             except Exception as e:
                 logger.error(f"清理临时文件失败: {str(e)}") 
+    
+    def release_resources(self):
+        """释放所有资源，包括内存和文件资源"""
+        try:
+            logger.info("开始释放视频处理器资源...")
+            
+            # 1. 停止任何进行中的处理
+            self.stop_processing()
+            
+            # 2. 停止进度定时器
+            self._stop_progress_timer()
+            
+            # 3. 清理临时文件
+            self.clean_temp_files()
+            
+            # 4. 释放可能的对象引用
+            self._last_progress_message = ""
+            self._last_progress_percent = 0
+            
+            # 5. 尝试手动清理未关闭的其他资源
+            # 先触发一次垃圾回收
+            gc.collect()
+            
+            # 安全的资源类型列表 - 这些是确认可以安全关闭的资源类型
+            safe_types = [
+                "VideoFileClip", "AudioFileClip", "CompositeVideoClip", 
+                "CompositeAudioClip", "VideoCapture", "AudioCapture",
+                "subprocess.Popen", "Thread", "Pool", "file", "io.TextIOWrapper"
+            ]
+            
+            # 明确需要跳过的类型
+            skip_types = [
+                "PyQt", "QWidget", "QLayout", "QObject", "QMainWindow", 
+                "QDialog", "QTimer", "QEvent", "QAction", "QMenu", "QLabel",
+                "QScrollArea", "QTabWidget", "QTableWidget", "QComboBox", "QSpinBox",
+                "ui", "window", "dialog", "form", "Button", "Layout", "Widget"
+            ]
+            
+            # 尝试关闭所有挂在该实例上的可关闭对象
+            for attr_name in dir(self):
+                if attr_name.startswith("__"):
+                    continue
+                
+                try:
+                    attr = getattr(self, attr_name)
+                    
+                    # 跳过None值
+                    if attr is None:
+                        continue
+                    
+                    # 跳过基本类型
+                    if isinstance(attr, (int, float, str, bool, list, dict, tuple)):
+                        continue
+                    
+                    # 获取类名和类型字符串，用于后续判断
+                    class_name = attr.__class__.__name__ if hasattr(attr, "__class__") else ""
+                    type_str = str(type(attr)).lower()
+                    
+                    # 检查是否为需要跳过的类型
+                    skip_this = False
+                    for skip_type in skip_types:
+                        if (skip_type.lower() in type_str.lower() or 
+                            (class_name and skip_type.lower() in class_name.lower())):
+                            logger.debug(f"跳过UI相关对象: {attr_name}, 类型: {class_name}")
+                            skip_this = True
+                            break
+                    
+                    if skip_this:
+                        continue
+                    
+                    # 检查是否为安全类型
+                    is_safe_type = False
+                    for safe_type in safe_types:
+                        if (safe_type.lower() in type_str.lower() or 
+                            (class_name and safe_type.lower() in class_name.lower())):
+                            is_safe_type = True
+                            break
+                    
+                    # 只处理安全类型的资源
+                    if is_safe_type:
+                        if hasattr(attr, "close") and callable(attr.close):
+                            logger.debug(f"关闭资源: {attr_name}, 类型: {class_name}")
+                            attr.close()
+                        elif hasattr(attr, "release") and callable(attr.release):
+                            logger.debug(f"释放资源: {attr_name}, 类型: {class_name}")
+                            attr.release()
+                        elif hasattr(attr, "terminate") and callable(attr.terminate):
+                            logger.debug(f"终止进程: {attr_name}, 类型: {class_name}")
+                            attr.terminate()
+                    else:
+                        logger.debug(f"跳过非安全类型资源: {attr_name}, 类型: {class_name}")
+                except Exception as e:
+                    logger.debug(f"关闭资源 {attr_name} 时出错: {str(e)}")
+            
+            logger.info("视频处理器资源释放完成")
+        except Exception as e:
+            logger.error(f"释放资源时出错: {str(e)}")
+    
+    def __del__(self):
+        """析构函数，确保资源被释放"""
+        try:
+            self.release_resources()
+        except:
+            pass
     
     def _should_use_direct_ffmpeg(self, codec):
         """
