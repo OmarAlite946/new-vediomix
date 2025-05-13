@@ -1243,21 +1243,6 @@ class VideoProcessor:
                     logger.error(error_msg)
                     raise RuntimeError(error_msg)
                 
-                # 添加水印（如果启用）
-                if self.settings.get("watermark_enabled", False):
-                    self.report_progress("正在添加水印...", progress_start + progress_range * 0.9)
-                    watermarked_path = self._create_temp_file("watermarked", ".mp4")
-                    
-                    if self._add_watermark_to_video(output_path, watermarked_path):
-                        try:
-                            # 替换原文件
-                            shutil.move(watermarked_path, output_path)
-                            logger.info("成功添加水印")
-                        except Exception as e:
-                            logger.error(f"替换水印文件失败: {str(e)}")
-                    else:
-                        logger.warning("添加水印失败，保留原始视频")
-                
                 # 验证输出文件
                 if not os.path.exists(output_path) or not self._check_video_file(output_path):
                     error_msg = "生成的输出文件无效或损坏"
@@ -3347,6 +3332,21 @@ class VideoProcessor:
                 if bgm_path and os.path.exists(bgm_path):
                     self._add_bgm_to_video(output_path, bgm_path)
                 
+                # 添加水印（如果启用）
+                if self.settings.get("watermark_enabled", False):
+                    self.report_progress("正在添加水印...", 95)
+                    watermarked_path = self._create_temp_file("watermarked", ".mp4")
+                    
+                    if self._add_watermark_to_video(output_path, watermarked_path):
+                        try:
+                            # 替换原文件
+                            shutil.move(watermarked_path, output_path)
+                            logger.info("成功添加水印")
+                        except Exception as e:
+                            logger.error(f"替换水印文件失败: {str(e)}")
+                    else:
+                        logger.warning("添加水印失败，保留原始视频")
+                
                 return True
             except Exception as e:
                 logger.error(f"复制单个片段失败: {str(e)}")
@@ -3426,6 +3426,22 @@ class VideoProcessor:
                 try:
                     result = subprocess.run(cmd, check=True, capture_output=True, text=True)
                     logger.info("视频片段直接拼接成功")
+                    
+                    # 添加水印（如果启用）
+                    if self.settings.get("watermark_enabled", False):
+                        self.report_progress("正在添加水印...", 95)
+                        watermarked_path = self._create_temp_file("watermarked", ".mp4")
+                        
+                        if self._add_watermark_to_video(output_path, watermarked_path):
+                            try:
+                                # 替换原文件
+                                shutil.move(watermarked_path, output_path)
+                                logger.info("成功添加水印")
+                            except Exception as e:
+                                logger.error(f"替换水印文件失败: {str(e)}")
+                        else:
+                            logger.warning("添加水印失败，保留原始视频")
+                    
                     return True
                 except subprocess.CalledProcessError as e:
                     logger.error(f"视频片段直接拼接失败: {e.stderr}")
@@ -3568,6 +3584,21 @@ class VideoProcessor:
                     # 如果有背景音乐，添加背景音乐
                     if bgm_path and os.path.exists(bgm_path):
                         self._add_bgm_to_video(output_path, bgm_path)
+                    
+                    # 添加水印（如果启用）
+                    if self.settings.get("watermark_enabled", False):
+                        self.report_progress("正在添加水印...", 95)
+                        watermarked_path = self._create_temp_file("watermarked", ".mp4")
+                        
+                        if self._add_watermark_to_video(output_path, watermarked_path):
+                            try:
+                                # 替换原文件
+                                shutil.move(watermarked_path, output_path)
+                                logger.info("成功添加水印")
+                            except Exception as e:
+                                logger.error(f"替换水印文件失败: {str(e)}")
+                        else:
+                            logger.warning("添加水印失败，保留原始视频")
                     
                     return True
                 except subprocess.CalledProcessError as e:
