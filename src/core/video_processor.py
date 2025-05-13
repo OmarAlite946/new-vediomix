@@ -702,36 +702,11 @@ class VideoProcessor:
                 
                 logger.info(f"在文件夹 '{video_folder}' 中找到 {len(video_files)} 个视频文件")
                 
-                # 分析视频时长
+                # 优化：不解码视频，只获取元数据
                 for video_file in video_files:
                     try:
-                        # 使用OpenCV获取视频信息
-                        cap = cv2.VideoCapture(video_file)
-                        if not cap.isOpened():
-                            logger.warning(f"无法打开视频: {video_file}")
-                            continue
-                        
-                        # 获取视频帧率和总帧数
-                        fps = cap.get(cv2.CAP_PROP_FPS)
-                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                        
-                        # 计算视频时长(秒)
-                        duration = frame_count / fps if fps > 0 else 0
-                        
-                        # 获取分辨率
-                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        
-                        cap.release()
-                        
-                        if duration > 0:
-                            video_info = {
-                                "path": video_file,
-                                "duration": duration,
-                                "fps": fps,
-                                "width": width,
-                                "height": height
-                            }
+                        video_info = self._get_video_metadata(video_file)
+                        if video_info and video_info.get("duration", 0) > 0:
                             video_info_list.append(video_info)
                     except Exception as e:
                         logger.warning(f"分析视频失败: {video_file}, 错误: {str(e)}")
@@ -785,19 +760,11 @@ class VideoProcessor:
                 
                 logger.info(f"在文件夹 '{audio_folder}' 中找到 {len(audio_files)} 个音频文件")
                 
-                # 分析音频时长
+                # 优化：不解码音频，只获取元数据
                 for audio_file in audio_files:
                     try:
-                        # 使用MoviePy获取音频信息
-                        audio_clip = AudioFileClip(audio_file)
-                        duration = audio_clip.duration
-                        audio_clip.close()
-                        
-                        if duration > 0:
-                            audio_info = {
-                                "path": audio_file,
-                                "duration": duration
-                            }
+                        audio_info = self._get_audio_metadata(audio_file)
+                        if audio_info and audio_info.get("duration", 0) > 0:
                             audio_info_list.append(audio_info)
                     except Exception as e:
                         logger.warning(f"分析音频失败: {audio_file}, 错误: {str(e)}")
@@ -805,6 +772,217 @@ class VideoProcessor:
         # 保存音频列表
         material_data[folder_key]["audios"] = audio_info_list
         logger.info(f"文件夹 '{folder_key}' 中找到 {len(audio_info_list)} 个有效配音")
+    
+    def _get_video_metadata(self, video_path: str) -> Dict[str, Any]:
+        """
+        获取视频文件的元数据信息，不解码视频内容
+        
+        Args:
+            video_path: 视频文件路径
+            
+        Returns:
+            Dict[str, Any]: 包含视频元数据的字典
+        """
+        # 检查文件是否存在
+        if not os.path.exists(video_path):
+            logger.warning(f"视频文件不存在: {video_path}")
+            return None
+            
+        try:
+            # 获取FFmpeg路径
+            ffmpeg_cmd = self._get_ffmpeg_cmd()
+            # 创建FFprobe命令
+            ffprobe_cmd = ffmpeg_cmd.replace("ffmpeg", "ffprobe")
+            
+            # 处理Windows中文路径
+            if os.name == 'nt':
+                try:
+                    import win32api
+                    short_path = win32api.GetShortPathName(video_path)
+                    video_path = short_path
+                except ImportError:
+                    logger.warning("无法导入win32api模块，将使用原始路径")
+                except Exception as e:
+                    logger.warning(f"转换路径时出错: {str(e)}，将使用原始路径")
+            
+            # 构建命令
+            cmd = [
+                ffprobe_cmd,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,avg_frame_rate,duration",
+                "-show_entries", "format=duration,bit_rate",
+                "-of", "json",
+                video_path
+            ]
+            
+            # 执行命令
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if result.returncode != 0:
+                logger.warning(f"获取视频元数据失败: {result.stderr}")
+                
+                # 尝试使用OpenCV作为备选方案（保留原始功能作为备选）
+                logger.info(f"尝试使用OpenCV获取视频信息: {video_path}")
+                try:
+                    cap = cv2.VideoCapture(video_path)
+                    if not cap.isOpened():
+                        logger.warning(f"无法打开视频: {video_path}")
+                        return None
+                    
+                    # 获取视频帧率和总帧数
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    
+                    # 计算视频时长(秒)
+                    duration = frame_count / fps if fps > 0 else 0
+                    
+                    # 获取分辨率
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    
+                    cap.release()
+                    
+                    if duration > 0:
+                        return {
+                            "path": video_path,
+                            "duration": duration,
+                            "fps": fps,
+                            "width": width,
+                            "height": height
+                        }
+                    return None
+                except Exception as cv_error:
+                    logger.error(f"OpenCV分析视频也失败: {str(cv_error)}")
+                    return None
+            
+            # 解析JSON结果
+            metadata = json.loads(result.stdout)
+            
+            # 提取视频流信息
+            stream_info = metadata.get("streams", [])[0] if metadata.get("streams") else {}
+            format_info = metadata.get("format", {})
+            
+            # 从流或格式中获取时长
+            duration = float(stream_info.get("duration", 0))
+            if duration == 0:
+                duration = float(format_info.get("duration", 0))
+            
+            # 获取帧率
+            fps_str = stream_info.get("avg_frame_rate", "0/1")
+            fps_parts = fps_str.split('/')
+            fps = float(fps_parts[0]) / float(fps_parts[1]) if len(fps_parts) == 2 and float(fps_parts[1]) > 0 else 0
+            
+            # 创建结果字典
+            video_info = {
+                "path": video_path,
+                "duration": duration,
+                "fps": fps,
+                "width": int(stream_info.get("width", 0)),
+                "height": int(stream_info.get("height", 0)),
+                "bit_rate": int(format_info.get("bit_rate", 0)) if format_info.get("bit_rate") else 0
+            }
+            
+            return video_info
+            
+        except Exception as e:
+            logger.warning(f"获取视频元数据失败: {str(e)}")
+            # 出错后返回None
+            return None
+    
+    def _get_audio_metadata(self, audio_path: str) -> Dict[str, Any]:
+        """
+        获取音频文件的元数据信息，不解码音频内容
+        
+        Args:
+            audio_path: 音频文件路径
+            
+        Returns:
+            Dict[str, Any]: 包含音频元数据的字典
+        """
+        # 检查文件是否存在
+        if not os.path.exists(audio_path):
+            logger.warning(f"音频文件不存在: {audio_path}")
+            return None
+            
+        try:
+            # 获取FFmpeg路径
+            ffmpeg_cmd = self._get_ffmpeg_cmd()
+            # 创建FFprobe命令
+            ffprobe_cmd = ffmpeg_cmd.replace("ffmpeg", "ffprobe")
+            
+            # 处理Windows中文路径
+            if os.name == 'nt':
+                try:
+                    import win32api
+                    short_path = win32api.GetShortPathName(audio_path)
+                    audio_path = short_path
+                except ImportError:
+                    logger.warning("无法导入win32api模块，将使用原始路径")
+                except Exception as e:
+                    logger.warning(f"转换路径时出错: {str(e)}，将使用原始路径")
+            
+            # 构建命令
+            cmd = [
+                ffprobe_cmd,
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=duration,sample_rate,channels",
+                "-show_entries", "format=duration,bit_rate",
+                "-of", "json",
+                audio_path
+            ]
+            
+            # 执行命令
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if result.returncode != 0:
+                logger.warning(f"获取音频元数据失败: {result.stderr}")
+                
+                # 尝试使用MoviePy作为备选方案（保留原始功能作为备选）
+                logger.info(f"尝试使用MoviePy获取音频信息: {audio_path}")
+                try:
+                    audio_clip = AudioFileClip(audio_path)
+                    duration = audio_clip.duration
+                    audio_clip.close()
+                    
+                    if duration > 0:
+                        return {
+                            "path": audio_path,
+                            "duration": duration
+                        }
+                    return None
+                except Exception as mp_error:
+                    logger.error(f"MoviePy分析音频也失败: {str(mp_error)}")
+                    return None
+            
+            # 解析JSON结果
+            metadata = json.loads(result.stdout)
+            
+            # 提取音频流信息
+            stream_info = metadata.get("streams", [])[0] if metadata.get("streams") else {}
+            format_info = metadata.get("format", {})
+            
+            # 从流或格式中获取时长
+            duration = float(stream_info.get("duration", 0))
+            if duration == 0:
+                duration = float(format_info.get("duration", 0))
+            
+            # 创建结果字典
+            audio_info = {
+                "path": audio_path,
+                "duration": duration,
+                "sample_rate": int(stream_info.get("sample_rate", 0)),
+                "channels": int(stream_info.get("channels", 0)),
+                "bit_rate": int(format_info.get("bit_rate", 0)) if format_info.get("bit_rate") else 0
+            }
+            
+            return audio_info
+            
+        except Exception as e:
+            logger.warning(f"获取音频元数据失败: {str(e)}")
+            # 出错后返回None
+            return None
     
     def _process_single_video(self, 
                               material_data: Dict[str, Dict[str, Any]], 
@@ -891,6 +1069,11 @@ class VideoProcessor:
             open_resources = []  # 跟踪需要关闭的资源
             used_videos = set()  # 跟踪已使用的视频，避免重复
             
+            # 创建临时文件夹用于分段处理
+            temp_dir = os.path.join(os.path.dirname(output_path), "temp_segments")
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_segment_files = []  # 存储临时片段文件路径
+            
             try:
                 for i, folder_name in enumerate(selected_folders):
                     if self.stop_requested:
@@ -926,6 +1109,8 @@ class VideoProcessor:
                         logger.info(f"选择配音: {os.path.basename(audio_file)}, 时长: {audio_duration:.2f}秒")
                     
                     # 根据抽取模式选择不同的处理逻辑
+                    segment_output_path = None  # 用于存储当前片段的输出路径
+                    
                     if extract_mode == "multi_video" and audio_duration > 0:
                         # 多视频拼接模式
                         logger.info(f"场景 '{folder_name}' 使用多视频拼接模式")
@@ -942,94 +1127,31 @@ class VideoProcessor:
                         random.shuffle(unused_videos)  # 随机打乱视频顺序
                         sorted_videos = unused_videos  # 变量名保持不变，但内容已经是随机顺序
                         
-                        # 准备拼接的片段
-                        concat_clips = []
-                        total_duration = 0
-                        used_video_paths = []
+                        # 创建当前片段的临时文件路径
+                        segment_output_path = os.path.join(temp_dir, f"segment_{i}_{uuid.uuid4()}.mp4")
                         
-                        # 尝试拼接视频片段直到达到配音时长
-                        for video_info in sorted_videos:
-                            if total_duration >= audio_duration:
-                                break
-                                
-                            video_file = video_info["path"]
-                            video_duration = video_info["duration"]
+                        # 优化：使用ffmpeg直接拼接视频，而不是先加载到内存
+                        self._concat_videos_with_ffmpeg(
+                            video_files=[v["path"] for v in sorted_videos],  # 提供视频文件路径列表
+                            audio_file=audio_file,  # 提供音频文件
+                            output_path=segment_output_path,  # 输出到临时文件
+                            target_duration=audio_duration  # 目标时长为音频时长
+                        )
+                        
+                        # 检查生成的片段文件
+                        if os.path.exists(segment_output_path) and os.path.getsize(segment_output_path) > 0:
+                            temp_segment_files.append(segment_output_path)
+                            logger.info(f"成功创建片段: {segment_output_path}")
                             
-                            try:
-                                # 加载视频剪辑
-                                video_clip = VideoFileClip(video_file)
-                                open_resources.append(video_clip)
-                                
-                                # 计算需要的时长
-                                remaining_duration = audio_duration - total_duration
-                                clip_duration = min(remaining_duration, video_duration)
-                                
-                                # 裁剪视频片段
-                                if clip_duration < video_duration:
-                                    video_clip = video_clip.subclip(0, clip_duration)
-                                
-                                # 添加到拼接列表
-                                concat_clips.append(video_clip)
-                                total_duration += clip_duration
-                                used_video_paths.append(video_file)
-                                used_videos.add(video_file)
-                                
-                                logger.info(f"添加视频片段: {os.path.basename(video_file)}, 时长: {clip_duration:.2f}秒, 累计时长: {total_duration:.2f}秒")
-                            except Exception as e:
-                                logger.error(f"加载视频 {video_file} 失败: {str(e)}")
-                                # 继续尝试其他视频
+                            # 记录已使用的视频
+                            for v in sorted_videos:
+                                used_videos.add(v["path"])
+                        else:
+                            logger.warning(f"创建片段文件失败: {segment_output_path}")
                         
-                        # 检查是否有足够的视频片段
-                        if not concat_clips:
-                            logger.warning(f"场景 '{folder_name}' 无法加载任何视频片段，跳过")
-                            continue
+                        # 强制内存清理
+                        self._force_memory_cleanup()
                         
-                        # 拼接视频片段
-                        try:
-                            if len(concat_clips) > 1:
-                                video_clip = concatenate_videoclips(concat_clips)
-                                logger.info(f"成功拼接 {len(concat_clips)} 个视频片段，总时长: {video_clip.duration:.2f}秒")
-                            else:
-                                video_clip = concat_clips[0]
-                                logger.info(f"使用单个视频片段，时长: {video_clip.duration:.2f}秒")
-                                
-                            # 最后检查拼接后的视频时长是否满足要求
-                            if video_clip.duration < audio_duration * 0.9:  # 允许10%的误差
-                                logger.warning(f"拼接后视频时长 {video_clip.duration:.2f}秒 小于配音时长 {audio_duration:.2f}秒，可能会影响质量")
-                            
-                            # 加载配音并添加到视频
-                            try:
-                                audio_clip = AudioFileClip(audio_file)
-                                open_resources.append(audio_clip)
-                                
-                                # 设置配音音量
-                                audio_clip = audio_clip.volumex(self.settings["voice_volume"])
-                                
-                                # 将配音添加到视频
-                                video_clip = video_clip.set_audio(audio_clip)
-                                
-                                # 将处理后的剪辑添加到列表
-                                selected_clips.append({
-                                    "clip": video_clip,
-                                    "folder": folder_name,
-                                    "video_path": ",".join(used_video_paths),  # 多个视频路径，用逗号分隔
-                                    "audio_path": audio_file
-                                })
-                                
-                                logger.info(f"场景 '{folder_name}' 多视频拼接处理完成，剪辑时长: {video_clip.duration:.2f}秒")
-                            except Exception as e:
-                                logger.error(f"添加配音到拼接视频失败: {str(e)}")
-                                # 保持视频原声
-                                selected_clips.append({
-                                    "clip": video_clip,
-                                    "folder": folder_name,
-                                    "video_path": ",".join(used_video_paths),
-                                    "audio_path": None
-                                })
-                        except Exception as e:
-                            logger.error(f"拼接视频片段失败: {str(e)}")
-                            # 跳过这个场景
-                            continue
                     else:
                         # 单视频模式（原始逻辑）
                         logger.info(f"场景 '{folder_name}' 使用单视频模式")
@@ -1063,371 +1185,96 @@ class VideoProcessor:
                         
                         logger.info(f"随机选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
                         
-                        try:
-                            # 加载视频剪辑
-                            try:
-                                video_clip = VideoFileClip(video_file)
-                            except Exception as e:
-                                logger.error(f"无法加载视频文件 {video_file}: {str(e)}")
-                                logger.warning(f"跳过场景 '{folder_name}'")
-                                continue
-                                
-                            open_resources.append(video_clip)
-                            
-                            # 根据配音时长裁剪视频
-                            if audio_file and audio_duration > 0:
-                                # 确保视频时长不小于配音时长
-                                clip_duration = audio_duration
-                                
-                                # 如果视频比配音长，则从视频开头开始截取，而不是从中间
-                                if video_duration > clip_duration:
-                                    start_time = 0  # 从视频开头开始截取
-                                    try:
-                                        video_clip = video_clip.subclip(start_time, start_time + clip_duration)
-                                        if video_clip.duration < 0.5:  # 如果裁剪后视频太短
-                                            logger.warning(f"裁剪后视频时长过短: {video_clip.duration:.2f}秒，使用原始视频")
-                                            video_clip = VideoFileClip(video_file)  # 重新加载原始视频
-                                    except Exception as e:
-                                        logger.error(f"裁剪视频时出错: {str(e)}，使用原始视频")
-                                        video_clip = VideoFileClip(video_file)  # 使用原始视频
-                                
-                                # 加载配音
-                                try:
-                                    audio_clip = AudioFileClip(audio_file)
-                                except Exception as e:
-                                    logger.error(f"无法加载音频文件 {audio_file}: {str(e)}")
-                                    logger.warning("将使用视频原声")
-                                    # 保持视频原声
-                                    selected_clips.append({
-                                        "clip": video_clip,
-                                        "folder": folder_name,
-                                        "video_path": video_file,
-                                        "audio_path": None
-                                    })
-                                    continue
-                                    
-                                open_resources.append(audio_clip)
-                                
-                                # 设置配音音量
-                                audio_clip = audio_clip.volumex(self.settings["voice_volume"])
-                                
-                                # 将配音添加到视频
-                                video_clip = video_clip.set_audio(audio_clip)
-                            
-                            # 将处理后的剪辑添加到列表
-                            selected_clips.append({
-                                "clip": video_clip,
-                                "folder": folder_name,
-                                "video_path": video_file,
-                                "audio_path": audio_file
-                            })
-                            
-                            logger.info(f"场景 '{folder_name}' 处理完成，剪辑时长: {video_clip.duration:.2f}秒")
-                        except Exception as e:
-                            logger.error(f"处理场景 '{folder_name}' 失败: {str(e)}")
-                            # 继续处理其他场景，不中断整个过程
+                        # 创建当前片段的临时文件路径
+                        segment_output_path = os.path.join(temp_dir, f"segment_{i}_{uuid.uuid4()}.mp4")
+                        
+                        # 使用ffmpeg直接处理单个视频
+                        self._process_single_video_with_ffmpeg(
+                            video_file=video_file,
+                            audio_file=audio_file,
+                            output_path=segment_output_path,
+                            target_duration=audio_duration if audio_duration > 0 else None
+                        )
+                        
+                        # 检查生成的片段文件
+                        if os.path.exists(segment_output_path) and os.path.getsize(segment_output_path) > 0:
+                            temp_segment_files.append(segment_output_path)
+                            logger.info(f"成功创建片段: {segment_output_path}")
+                        else:
+                            logger.warning(f"创建片段文件失败: {segment_output_path}")
+                        
+                        # 强制内存清理
+                        self._force_memory_cleanup()
                     
                     # 添加更多进度更新点，避免长时间无更新
                     current_progress = (i + 1) / len(folders) * 0.4  # 场景选择占总进度的40%
                     self.report_progress(f"已处理 {i+1}/{len(folders)} 个场景", 
                                       progress_start + progress_range * current_progress)
                 
-                # 检查是否有足够的剪辑
-                if len(selected_clips) < len(folders):
-                    error_msg = f"没有足够的有效素材，至少需要 {len(folders)} 个场景，但只有 {len(selected_clips)} 个场景有效"
+                # 检查是否有生成的片段
+                if not temp_segment_files:
+                    error_msg = "没有生成任何有效的视频片段"
                     logger.error(error_msg)
                     raise ValueError(error_msg)
                 
-                # 合并剪辑，添加转场
-                self.report_progress("正在合并剪辑和添加转场效果...", 
+                # 合并所有片段，添加转场效果
+                self.report_progress("正在合并片段并添加转场效果...", 
                                    progress_start + progress_range * 0.5)
                 
                 try:
-                    final_clip = self._merge_clips_with_transitions(selected_clips)
-                    open_resources.append(final_clip)
+                    # 使用ffmpeg合并所有片段
+                    final_success = self._combine_segments_with_ffmpeg(
+                        segment_files=temp_segment_files,
+                        output_path=output_path,
+                        bgm_path=bgm_path,
+                        transition_type=self.settings["transition"],
+                        transition_duration=self.settings["transition_duration"]
+                    )
+                    
+                    if not final_success:
+                        error_msg = "合并片段失败"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+                    
+                    logger.info(f"成功合并 {len(temp_segment_files)} 个片段到 {output_path}")
+                    
                 except Exception as e:
-                    error_msg = f"合并剪辑失败: {str(e)}"
+                    error_msg = f"合并片段失败: {str(e)}"
                     logger.error(error_msg)
                     raise RuntimeError(error_msg)
                 
-                # 添加背景音乐（如果有）
-                if bgm_path and os.path.exists(bgm_path):
-                    self.report_progress("正在添加背景音乐...", progress_start + progress_range * 0.7)
+                # 添加水印（如果启用）
+                if self.settings.get("watermark_enabled", False):
+                    self.report_progress("正在添加水印...", progress_start + progress_range * 0.9)
+                    watermarked_path = self._create_temp_file("watermarked", ".mp4")
                     
-                    try:
-                        # 加载背景音乐
-                        bgm_clip = AudioFileClip(bgm_path)
-                        open_resources.append(bgm_clip)
-                        
-                        # 设置背景音乐音量
-                        bgm_clip = bgm_clip.volumex(self.settings["bgm_volume"])
-                        
-                        # 如果背景音乐比视频短，则循环播放
-                        if bgm_clip.duration < final_clip.duration:
-                            bgm_clip = bgm_clip.fx(vfx.loop, duration=final_clip.duration)
-                        
-                        # 如果背景音乐比视频长，则裁剪
-                        if bgm_clip.duration > final_clip.duration:
-                            bgm_clip = bgm_clip.subclip(0, final_clip.duration)
-                        
-                        # 将背景音乐与视频音频混合
-                        if final_clip.audio is not None:
-                            new_audio = CompositeAudioClip([final_clip.audio, bgm_clip])
-                            final_clip = final_clip.set_audio(new_audio)
-                        else:
-                            final_clip = final_clip.set_audio(bgm_clip)
-                        
-                        logger.info("背景音乐添加成功")
-                    except Exception as e:
-                        logger.error(f"添加背景音乐失败: {str(e)}")
-                        # 继续导出，但不使用背景音乐
-                
-                # 设置导出参数
-                export_params = {}
-                
-                # 设置基本编码参数
-                codec = "libx264"
-                audio_codec = "aac"
-                
-                # 根据设置配置硬件加速和编码器
-                if self.settings["hardware_accel"] != "none":
-                    if self.settings["hardware_accel"] == "cuda" or (
-                        self.settings["hardware_accel"] == "auto" and "nvidia" in self.settings["encoder"].lower()):
-                        # NVIDIA GPU加速
-                        codec = "h264_nvenc"
-                        logger.info("使用NVIDIA GPU加速编码视频")
-                    elif self.settings["hardware_accel"] == "qsv":
-                        # Intel QSV加速
-                        codec = "h264_qsv"
-                        logger.info("使用Intel QSV加速编码视频")
-                    elif self.settings["hardware_accel"] == "amf":
-                        # AMD AMF加速
-                        codec = "h264_amf"
-                        logger.info("使用AMD AMF加速编码视频")
-                
-                # 设置比特率
-                if self.settings["bitrate"] > 0:
-                    export_params["bitrate"] = f"{self.settings['bitrate']}k"
-                
-                # 设置线程数
-                if self.settings["threads"] > 0:
-                    export_params["threads"] = self.settings["threads"]
-                
-                # 导出视频
-                self.report_progress("正在导出视频...", progress_start + progress_range * 0.8)
-                
-                try:
-                    # 先尝试使用直接FFmpeg命令进行硬件加速编码
-                    if self.settings["hardware_accel"] != "none" and self._should_use_direct_ffmpeg(codec):
-                        # 创建临时文件路径用于原始视频
-                        temp_raw_video = self._create_temp_file("temp_raw", ".mp4")
-                        
-                        # 根据硬件加速类型确定要使用的编码器
-                        if self.settings["hardware_accel"] == "auto" or self.settings["hardware_accel"] == "force":
-                            # 如果是自动或强制硬件加速，根据encoder设置确定编码器
-                            encoder_setting = self.settings.get("encoder", "").lower()
-                            if "nvidia" in encoder_setting or "nvenc" in encoder_setting:
-                                codec = "h264_nvenc"
-                            elif "intel" in encoder_setting or "qsv" in encoder_setting:
-                                codec = "h264_qsv"
-                            elif "amd" in encoder_setting or "amf" in encoder_setting:
-                                codec = "h264_amf"
-                        
-                        logger.info(f"将使用FFmpeg直接编码，编码器: {codec}")
-                        logger.info(f"硬件加速配置: {self.settings['hardware_accel']}")
-                        logger.info(f"编码器设置: {self.settings['encoder']}")
-                        
-                        # 添加进度监控函数
-                        export_start_time = time.time()
-                        def progress_monitor():
-                            """监控视频导出进度的线程函数"""
-                            last_progress = 0
-                            while not self.stop_requested and os.path.exists(temp_raw_video):
-                                try:
-                                    # 尝试预估进度
-                                    elapsed_time = time.time() - export_start_time
-                                    if final_clip.duration > 0:
-                                        # 以实际经过时间预估进度，假设导出处理速度为实时速度的2-5倍
-                                        est_progress = min(0.95, elapsed_time / (final_clip.duration * 3))
-                                        if est_progress > last_progress:
-                                            last_progress = est_progress
-                                            percent = progress_start + progress_range * (0.8 + 0.15 * est_progress)
-                                            self.report_progress(f"正在导出临时视频... {int(est_progress * 100)}%", percent)
-                                except Exception as e:
-                                    logger.error(f"进度监控错误: {str(e)}")
-                                
-                                # 每秒更新一次进度
-                                time.sleep(1)
-                        
-                        # 启动进度监控线程
-                        progress_thread = threading.Thread(target=progress_monitor)
-                        progress_thread.daemon = True
-                        progress_thread.start()
-                        
+                    if self._add_watermark_to_video(output_path, watermarked_path):
                         try:
-                            # 导出视频时也使用GPU编码
-                            # 确保使用硬件加速编码器，如果兼容模式开启则使用GPU编码器，否则回退到libx264
-                            temp_codec = codec if self.settings.get("compatibility_mode", True) else "libx264"
-                            logger.info(f"临时文件将使用编码器: {temp_codec}")
-                            
-                            # 记录最终确定的硬件编码器
-                            final_encoder = temp_codec
-                            logger.info(f"最终确定的硬件编码器: {final_encoder}")
-                            
-                            # 导出视频使用GPU编码
-                            final_clip.write_videofile(
-                                temp_raw_video, 
-                                fps=30, 
-                                codec=temp_codec,  # 对临时文件也尝试使用GPU编码
-                                audio_codec="aac",
-                                remove_temp=True,
-                                write_logfile=False,
-                                preset="fast", 
-                                verbose=False,
-                                threads=self.settings["threads"],
-                                ffmpeg_params=[
-                                    "-hide_banner", "-y",
-                                    "-pix_fmt", "yuv420p",  # 确保使用标准像素格式
-                                    "-profile:v", "high",   # 使用高质量配置文件
-                                    "-level", "4.1",        # 兼容性级别
-                                    "-movflags", "+faststart" # 优化网络流式传输
-                                ]
-                            )
+                            # 替换原文件
+                            shutil.move(watermarked_path, output_path)
+                            logger.info("成功添加水印")
                         except Exception as e:
-                            logger.warning(f"使用GPU编码器 {codec} 处理临时文件失败: {str(e)}")
-                            logger.warning("回退到使用CPU编码器(libx264)处理临时文件")
-                            
-                            # 如果GPU编码失败，回退到CPU编码
-                            final_clip.write_videofile(
-                                temp_raw_video, 
-                                fps=30, 
-                                codec="libx264",  # 回退到CPU编码器
-                                audio_codec="aac",
-                                remove_temp=True,
-                                write_logfile=False,
-                                preset="ultrafast", 
-                                verbose=False,
-                                threads=self.settings["threads"],
-                                ffmpeg_params=[
-                                    "-hide_banner", "-y",
-                                    "-pix_fmt", "yuv420p",
-                                    "-profile:v", "high",
-                                    "-level", "4.1",
-                                    "-movflags", "+faststart"
-                                ]
-                            )
-                        
-                        # 再使用FFmpeg进行硬件加速编码
-                        if os.path.exists(temp_raw_video):
-                            logger.info(f"临时文件已生成，准备使用GPU加速编码器 {codec} 进行最终编码")
-                            
-                            # 检查临时文件有效性
-                            temp_valid = self._check_video_file(temp_raw_video)
-                            if not temp_valid:
-                                logger.warning(f"临时文件 {temp_raw_video} 无效或损坏，尝试重新生成")
-                                # 尝试简单的拷贝转换临时文件
-                                try:
-                                    repaired_temp = self._create_temp_file("repaired_raw", ".mp4")
-                                    ffmpeg_cmd = self._get_ffmpeg_cmd()
-                                    repair_cmd = [
-                                        ffmpeg_cmd, 
-                                        "-i", temp_raw_video,
-                                        "-c", "copy",
-                                        "-y",
-                                        repaired_temp
-                                    ]
-                                    
-                                    # 处理Windows中文路径
-                                    if os.name == 'nt':
-                                        try:
-                                            import win32api
-                                            if os.path.exists(temp_raw_video):
-                                                repair_cmd[2] = win32api.GetShortPathName(temp_raw_video)
-                                        except Exception as e:
-                                            logger.warning(f"转换临时文件路径失败: {str(e)}")
-                                    
-                                    logger.info(f"尝试修复临时文件: {' '.join(repair_cmd)}")
-                                    subprocess.run(repair_cmd, check=True)
-                                    
-                                    if os.path.exists(repaired_temp) and self._check_video_file(repaired_temp):
-                                        logger.info("临时文件修复成功")
-                                        temp_raw_video = repaired_temp
-                                    else:
-                                        logger.warning("临时文件修复失败")
-                                except Exception as e:
-                                    logger.error(f"尝试修复临时文件时出错: {str(e)}")
-                            
-                            # 使用FFmpeg进行最终编码
-                            success = self._encode_with_ffmpeg(temp_raw_video, output_path, self.settings["hardware_accel"], codec)
-                            
-                            # 如果成功，并且启用了水印功能，则添加水印
-                            if success and self.settings.get("watermark_enabled", False):
-                                try:
-                                    self.report_progress("正在添加时间戳水印...", progress_start + progress_range * 0.95)
-                                    # 使用带水印的临时文件路径
-                                    watermarked_output = self._create_temp_file("watermarked", ".mp4")
-                                    # 添加水印到视频
-                                    watermark_success = self._add_watermark_to_video(output_path, watermarked_output)
-                                    
-                                    if watermark_success:
-                                        # 使用临时文件替换原输出文件
-                                        try:
-                                            os.remove(output_path)
-                                        except Exception as e:
-                                            logger.warning(f"删除原输出文件失败: {str(e)}")
-                                            
-                                        try:
-                                            shutil.move(watermarked_output, output_path)
-                                            logger.info("成功添加水印并替换原输出文件")
-                                        except Exception as e:
-                                            logger.error(f"移动水印文件失败: {str(e)}")
-                                            # 如果移动失败，尝试直接复制
-                                            try:
-                                                shutil.copy2(watermarked_output, output_path)
-                                                os.remove(watermarked_output)
-                                                logger.info("使用复制方式替换原输出文件")
-                                            except Exception as copy_error:
-                                                logger.error(f"复制水印文件失败: {str(copy_error)}")
-                                    else:
-                                        logger.warning("添加水印失败，将使用无水印版本")
-                                except Exception as e:
-                                    logger.error(f"添加水印过程出错: {str(e)}")
-                                    logger.warning("将使用无水印版本")
-                            
-                            # 如果成功，删除临时文件并返回
-                            if success:
-                                try:
-                                    os.remove(temp_raw_video)
-                                except Exception as e:
-                                    logger.warning(f"无法删除临时文件: {str(e)}")
-                                
-                                # 验证输出文件
-                                if self._check_video_file(output_path):
-                                    logger.info(f"使用FFmpeg硬件加速导出视频成功: {output_path}")
-                                    self.report_progress("视频导出完成", progress_end)
-                                    return output_path
-                                else:
-                                    logger.error("导出的视频文件无效或损坏")
-                                    if os.path.exists(output_path):
-                                        try:
-                                            os.remove(output_path)
-                                        except Exception:
-                                            pass
-                                    raise RuntimeError("导出的视频文件无效或损坏")
-                            else:
-                                logger.warning("硬件加速失败，回退到标准编码")
-                except Exception as e:
-                    logger.error(f"导出视频失败: {str(e)}")
-                    if os.path.exists(output_path):
-                        try:
-                            os.remove(output_path)
-                            logger.info(f"已删除失败的输出文件: {output_path}")
-                        except Exception as remove_error:
-                            logger.warning(f"无法删除失败的输出文件: {str(remove_error)}")
-                    raise RuntimeError(f"导出视频失败: {str(e)}")
+                            logger.error(f"替换水印文件失败: {str(e)}")
+                    else:
+                        logger.warning("添加水印失败，保留原始视频")
+                
+                # 验证输出文件
+                if not os.path.exists(output_path) or not self._check_video_file(output_path):
+                    error_msg = "生成的输出文件无效或损坏"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                
+                self.report_progress("视频处理完成", progress_end)
+                return output_path
+                
             except Exception as e:
-                logger.error(f"执行FFmpeg命令时出错: {str(e)}")
-                return False
+                logger.error(f"处理视频时出错: {str(e)}")
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except Exception:
+                        pass
+                raise
         finally:
             # 关闭所有打开的资源
             for res in open_resources:
@@ -1436,14 +1283,28 @@ class VideoProcessor:
                 except Exception:
                     pass
             
-            # 关闭选定片段中的所有剪辑资源
-            if 'selected_clips' in locals():
-                for clip_info in selected_clips:
+            # 清理临时片段文件
+            if 'temp_segment_files' in locals():
+                for temp_file in temp_segment_files:
                     try:
-                        if 'clip' in clip_info and hasattr(clip_info['clip'], 'close'):
-                            clip_info['clip'].close()
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                            logger.debug(f"已删除临时片段文件: {temp_file}")
                     except Exception as e:
-                        logger.error(f"关闭剪辑资源时出错: {str(e)}")
+                        logger.warning(f"删除临时片段文件失败: {str(e)}")
+            
+            # 尝试删除临时目录
+            if 'temp_dir' in locals() and os.path.exists(temp_dir):
+                try:
+                    # 只有目录为空时才删除
+                    if not os.listdir(temp_dir):
+                        os.rmdir(temp_dir)
+                        logger.debug(f"已删除临时片段目录: {temp_dir}")
+                except Exception:
+                    pass
+            
+            # 最终内存清理
+            self._force_memory_cleanup()
     
     def _merge_clips_with_transitions(self, clip_infos: List[Dict[str, Any]]) -> VideoFileClip:
         """
@@ -2416,7 +2277,7 @@ class VideoProcessor:
         except Exception as e:
             logger.warning(f"检查视频文件有效性时出错: {str(e)}")
             return False
-
+    
     def _get_watermark_text(self) -> str:
         """
         生成时间戳水印文本
@@ -3181,3 +3042,635 @@ class VideoProcessor:
         audio_extensions = ['.mp3', '.wav', '.aac', '.ogg', '.flac', '.m4a']
         _, ext = os.path.splitext(file_path.lower())
         return ext in audio_extensions
+
+    def _force_memory_cleanup(self):
+        """
+        强制清理内存、执行垃圾回收
+        用于高内存占用操作后释放资源
+        """
+        # 记录清理前内存
+        try:
+            import psutil
+            process = psutil.Process()
+            before_mem = process.memory_info().rss / (1024 * 1024)  # MB
+            logger.debug(f"清理前内存占用: {before_mem:.2f} MB")
+        except ImportError:
+            logger.debug("未安装psutil，无法监控内存使用")
+            before_mem = 0
+        
+        # 执行多次垃圾回收
+        collected = 0
+        for i in range(3):
+            collected += gc.collect(i)
+        
+        # 记录清理后内存
+        try:
+            if before_mem > 0:
+                after_mem = process.memory_info().rss / (1024 * 1024)  # MB
+                logger.info(f"内存清理完成: 回收{collected}个对象, 内存从 {before_mem:.2f} MB 降至 {after_mem:.2f} MB")
+        except:
+            logger.debug(f"内存清理完成: 回收{collected}个对象")
+
+    def _concat_videos_with_ffmpeg(self, video_files, audio_file, output_path, target_duration=None):
+        """
+        使用FFmpeg直接拼接视频并添加音频，避免内存占用
+        
+        Args:
+            video_files: 视频文件路径列表
+            audio_file: 音频文件路径
+            output_path: 输出文件路径
+            target_duration: 目标时长，如果提供则裁剪到指定时长
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not video_files:
+            logger.error("没有提供视频文件")
+            return False
+        
+        # 随机打乱视频顺序
+        import random
+        random.shuffle(video_files)
+        
+        # 获取FFmpeg命令
+        ffmpeg_cmd = self._get_ffmpeg_cmd()
+        
+        # 创建临时文件列表
+        list_file = self._create_temp_file("concat_list", ".txt")
+        
+        try:
+            # 计算已有总时长
+            total_duration = 0
+            final_video_files = []
+            
+            # 选择视频直到达到目标时长
+            for video_file in video_files:
+                # 获取视频信息
+                video_info = self._get_video_metadata(video_file)
+                if not video_info:
+                    logger.warning(f"无法获取视频元数据: {video_file}")
+                    continue
+                
+                video_duration = video_info.get("duration", 0)
+                if video_duration <= 0:
+                    logger.warning(f"视频时长无效: {video_file}")
+                    continue
+                
+                # 如果已达到目标时长，跳出循环
+                if target_duration and total_duration >= target_duration:
+                    break
+                
+                # 添加到最终列表
+                final_video_files.append(video_file)
+                total_duration += video_duration
+                
+                logger.info(f"添加视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒, 累计: {total_duration:.2f}秒")
+            
+            if not final_video_files:
+                logger.error("没有有效的视频文件可拼接")
+                return False
+                
+            # 如果只有一个视频文件，直接处理单个视频
+            if len(final_video_files) == 1:
+                return self._process_single_video_with_ffmpeg(
+                    final_video_files[0], 
+                    audio_file, 
+                    output_path, 
+                    target_duration
+                )
+            
+            # 创建文件列表
+            with open(list_file, 'w', encoding='utf-8') as f:
+                for video in final_video_files:
+                    # 处理Windows路径
+                    if os.name == 'nt':
+                        video = video.replace('\\', '/')
+                    f.write(f"file '{video}'\n")
+            
+            # 构建基本拼接命令
+            cmd = [
+                ffmpeg_cmd,
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", list_file
+            ]
+            
+            # 如果有音频文件
+            if audio_file and os.path.exists(audio_file):
+                cmd.extend(["-i", audio_file])
+                
+                # 配置音频选项
+                cmd.extend([
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0"
+                ])
+                
+                # 调整音频音量
+                voice_volume = self.settings.get("voice_volume", 1.0)
+                if voice_volume != 1.0:
+                    cmd.extend(["-af", f"volume={voice_volume}"])
+            else:
+                # 如果没有音频，保留原视频音轨
+                cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+            
+            # 如果目标时长存在且比总时长短，则裁剪
+            if target_duration and target_duration < total_duration:
+                cmd.extend(["-t", str(target_duration)])
+            
+            # 添加视频编码器选项
+            hardware_accel = self.settings.get("hardware_accel", "none")
+            encoder = self.settings.get("encoder", "libx264")
+            
+            # 选择合适的编码器
+            if hardware_accel != "none":
+                if "nvenc" in encoder or "nvidia" in hardware_accel.lower():
+                    encoder = "h264_nvenc"
+                elif "qsv" in encoder or "intel" in hardware_accel.lower():
+                    encoder = "h264_qsv"
+                elif "amf" in encoder or "amd" in hardware_accel.lower():
+                    encoder = "h264_amf"
+            
+            # 添加编码器和质量选项
+            cmd.extend([
+                "-c:v", encoder,
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high",
+                "-level", "4.1",
+                "-b:v", f"{self.settings.get('bitrate', 5000)}k",
+                "-maxrate", f"{int(self.settings.get('bitrate', 5000) * 1.5)}k",
+                "-bufsize", f"{self.settings.get('bitrate', 5000) * 2}k",
+                "-preset", "medium",
+                "-movflags", "+faststart",
+                output_path
+            ])
+            
+            # 执行命令
+            logger.info(f"执行FFmpeg拼接命令: {' '.join(cmd)}")
+            try:
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                logger.info("视频拼接成功")
+                return True
+            except subprocess.CalledProcessError as e:
+                logger.error(f"视频拼接失败: {e.stderr}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"拼接视频时出错: {str(e)}")
+            return False
+        finally:
+            # 清理临时文件
+            try:
+                if os.path.exists(list_file):
+                    os.remove(list_file)
+            except Exception:
+                pass
+
+    def _process_single_video_with_ffmpeg(self, video_file, audio_file, output_path, target_duration=None):
+        """
+        使用FFmpeg直接处理单个视频和音频
+        
+        Args:
+            video_file: 视频文件路径
+            audio_file: 音频文件路径
+            output_path: 输出文件路径
+            target_duration: 目标时长，如果提供则裁剪到指定时长
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not video_file or not os.path.exists(video_file):
+            logger.error(f"视频文件不存在: {video_file}")
+            return False
+        
+        # 获取FFmpeg命令
+        ffmpeg_cmd = self._get_ffmpeg_cmd()
+        
+        # 构建基本命令
+        cmd = [
+            ffmpeg_cmd,
+            "-y",
+            "-i", video_file
+        ]
+        
+        # 如果有音频文件
+        if audio_file and os.path.exists(audio_file):
+            cmd.extend(["-i", audio_file])
+            
+            # 配置音频选项
+            cmd.extend([
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-map", "0:v:0",
+                "-map", "1:a:0"
+            ])
+            
+            # 调整音频音量
+            voice_volume = self.settings.get("voice_volume", 1.0)
+            if voice_volume != 1.0:
+                cmd.extend(["-af", f"volume={voice_volume}"])
+        else:
+            # 如果没有音频，保留原视频音轨
+            cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        
+        # 如果目标时长存在，则裁剪
+        if target_duration:
+            cmd.extend(["-t", str(target_duration)])
+        
+        # 添加视频编码器选项
+        hardware_accel = self.settings.get("hardware_accel", "none")
+        encoder = self.settings.get("encoder", "libx264")
+        
+        # 选择合适的编码器
+        if hardware_accel != "none":
+            if "nvenc" in encoder or "nvidia" in hardware_accel.lower():
+                encoder = "h264_nvenc"
+            elif "qsv" in encoder or "intel" in hardware_accel.lower():
+                encoder = "h264_qsv"
+            elif "amf" in encoder or "amd" in hardware_accel.lower():
+                encoder = "h264_amf"
+        
+        # 添加编码器和质量选项
+        cmd.extend([
+            "-c:v", encoder,
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-level", "4.1",
+            "-b:v", f"{self.settings.get('bitrate', 5000)}k",
+            "-maxrate", f"{int(self.settings.get('bitrate', 5000) * 1.5)}k",
+            "-bufsize", f"{self.settings.get('bitrate', 5000) * 2}k",
+            "-preset", "medium",
+            "-movflags", "+faststart",
+            output_path
+        ])
+        
+        # 执行命令
+        logger.info(f"执行FFmpeg处理命令: {' '.join(cmd)}")
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.info("视频处理成功")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"视频处理失败: {e.stderr}")
+            return False
+        except Exception as e:
+            logger.error(f"处理视频时出错: {str(e)}")
+            return False
+
+    def _combine_segments_with_ffmpeg(self, segment_files, output_path, bgm_path=None, transition_type="随机转场", transition_duration=0.5):
+        """
+        使用FFmpeg合并视频片段并添加转场效果
+        
+        Args:
+            segment_files: 视频片段文件路径列表
+            output_path: 输出文件路径
+            bgm_path: 背景音乐路径
+            transition_type: 转场类型
+            transition_duration: 转场时长
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not segment_files:
+            logger.error("没有提供视频片段")
+            return False
+        
+        # 如果只有一个片段，直接复制
+        if len(segment_files) == 1:
+            try:
+                shutil.copy2(segment_files[0], output_path)
+                logger.info(f"只有一个片段，直接复制到: {output_path}")
+                
+                # 如果有背景音乐，添加背景音乐
+                if bgm_path and os.path.exists(bgm_path):
+                    self._add_bgm_to_video(output_path, bgm_path)
+                
+                return True
+            except Exception as e:
+                logger.error(f"复制单个片段失败: {str(e)}")
+                return False
+        
+        # 获取FFmpeg命令
+        ffmpeg_cmd = self._get_ffmpeg_cmd()
+        
+        # 创建临时文件用于复杂滤镜
+        filter_file = self._create_temp_file("complex_filter", ".txt")
+        list_file = self._create_temp_file("concat_list", ".txt")
+        
+        try:
+            # 如果转场类型为"不使用转场"，直接拼接
+            if transition_type == "不使用转场":
+                # 创建文件列表
+                with open(list_file, 'w', encoding='utf-8') as f:
+                    for video in segment_files:
+                        # 处理Windows路径
+                        if os.name == 'nt':
+                            video = video.replace('\\', '/')
+                        f.write(f"file '{video}'\n")
+                
+                # 构建基本拼接命令
+                cmd = [
+                    ffmpeg_cmd,
+                    "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", list_file
+                ]
+                
+                # 如果有背景音乐
+                if bgm_path and os.path.exists(bgm_path):
+                    cmd.extend(["-i", bgm_path])
+                    
+                    # 混合原音频和背景音乐
+                    bgm_volume = self.settings.get("bgm_volume", 0.3)
+                    cmd.extend([
+                        "-filter_complex", 
+                        f"[0:a]volume=1[a1];[1:a]volume={bgm_volume}[a2];[a1][a2]amix=inputs=2:duration=longest[a]",
+                        "-map", "0:v", 
+                        "-map", "[a]"
+                    ])
+                
+                # 添加编码器选项
+                hardware_accel = self.settings.get("hardware_accel", "none")
+                encoder = self.settings.get("encoder", "libx264")
+                
+                # 选择合适的编码器
+                if hardware_accel != "none":
+                    if "nvenc" in encoder or "nvidia" in hardware_accel.lower():
+                        encoder = "h264_nvenc"
+                    elif "qsv" in encoder or "intel" in hardware_accel.lower():
+                        encoder = "h264_qsv"
+                    elif "amf" in encoder or "amd" in hardware_accel.lower():
+                        encoder = "h264_amf"
+                
+                # 添加编码器和质量选项
+                cmd.extend([
+                    "-c:v", encoder,
+                    "-pix_fmt", "yuv420p",
+                    "-profile:v", "high",
+                    "-level", "4.1",
+                    "-b:v", f"{self.settings.get('bitrate', 5000)}k",
+                    "-maxrate", f"{int(self.settings.get('bitrate', 5000) * 1.5)}k",
+                    "-bufsize", f"{self.settings.get('bitrate', 5000) * 2}k",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-preset", "medium",
+                    "-movflags", "+faststart",
+                    output_path
+                ])
+                
+                # 执行命令
+                logger.info(f"执行FFmpeg直接拼接命令: {' '.join(cmd)}")
+                try:
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    logger.info("视频片段直接拼接成功")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"视频片段直接拼接失败: {e.stderr}")
+                    return False
+            else:
+                # 使用交叉淡入淡出转场效果
+                # 由于FFmpeg的复杂滤镜较难实时构建，我们使用预先创建的滤镜文件
+                
+                # 首先生成每个片段的单独输入
+                inputs = []
+                for i, segment in enumerate(segment_files):
+                    inputs.append(f"-i {segment}")
+                
+                # 构建滤镜图
+                filter_complex = []
+                
+                # 为每个输入添加标签
+                for i in range(len(segment_files)):
+                    filter_complex.append(f"[{i}:v]format=yuv420p,setpts=PTS-STARTPTS[v{i}];")
+                    filter_complex.append(f"[{i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}];")
+                
+                # 添加视频转场
+                for i in range(len(segment_files) - 1):
+                    if i == 0:
+                        # 第一个转场
+                        filter_complex.append(f"[v{i}][v{i+1}]xfade=transition=fade:duration={transition_duration}:offset={transition_duration}[xv{i+1}];")
+                    else:
+                        # 后续转场
+                        filter_complex.append(f"[xv{i}][v{i+1}]xfade=transition=fade:duration={transition_duration}:offset={transition_duration}[xv{i+1}];")
+                
+                # 音频转场使用acrossfade
+                for i in range(len(segment_files) - 1):
+                    if i == 0:
+                        # 第一个转场
+                        filter_complex.append(f"[a{i}][a{i+1}]acrossfade=d={transition_duration}[xa{i+1}];")
+                    else:
+                        # 后续转场
+                        filter_complex.append(f"[xa{i}][a{i+1}]acrossfade=d={transition_duration}[xa{i+1}];")
+                
+                # 如果有背景音乐
+                if bgm_path and os.path.exists(bgm_path):
+                    inputs.append(f"-i {bgm_path}")
+                    bgm_index = len(segment_files)
+                    
+                    # 添加背景音乐混合
+                    bgm_volume = self.settings.get("bgm_volume", 0.3)
+                    filter_complex.append(f"[{bgm_index}:a]volume={bgm_volume},aloop=loop=-1:size=2e+09[bgm];")
+                    filter_complex.append(f"[xa{len(segment_files)-1}][bgm]amix=inputs=2:duration=first[aout]")
+                    
+                    # 最终输出
+                    filter_complex.append(f"[xv{len(segment_files)-1}][aout]")
+                else:
+                    # 最终输出
+                    filter_complex.append(f"[xv{len(segment_files)-1}][xa{len(segment_files)-1}]")
+                
+                # 保存滤镜到文件
+                with open(filter_file, 'w', encoding='utf-8') as f:
+                    f.write(';'.join(filter_complex))
+                
+                # 构建命令
+                cmd_parts = [
+                    ffmpeg_cmd,
+                    "-y"
+                ]
+                
+                # 添加输入文件
+                for segment in segment_files:
+                    cmd_parts.extend(["-i", segment])
+                
+                # 如果有背景音乐
+                if bgm_path and os.path.exists(bgm_path):
+                    cmd_parts.extend(["-i", bgm_path])
+                
+                # 添加复杂滤镜
+                cmd_parts.extend([
+                    "-filter_complex_script", filter_file
+                ])
+                
+                # 选择编码器
+                hardware_accel = self.settings.get("hardware_accel", "none")
+                encoder = self.settings.get("encoder", "libx264")
+                
+                if hardware_accel != "none":
+                    if "nvenc" in encoder or "nvidia" in hardware_accel.lower():
+                        encoder = "h264_nvenc"
+                    elif "qsv" in encoder or "intel" in hardware_accel.lower():
+                        encoder = "h264_qsv"
+                    elif "amf" in encoder or "amd" in hardware_accel.lower():
+                        encoder = "h264_amf"
+                
+                # 添加输出选项
+                cmd_parts.extend([
+                    "-map", "[xv" + str(len(segment_files)-1) + "]",
+                    "-map", "[" + ("aout" if bgm_path and os.path.exists(bgm_path) else "xa" + str(len(segment_files)-1)) + "]",
+                    "-c:v", encoder,
+                    "-pix_fmt", "yuv420p",
+                    "-profile:v", "high",
+                    "-level", "4.1",
+                    "-b:v", f"{self.settings.get('bitrate', 5000)}k",
+                    "-maxrate", f"{int(self.settings.get('bitrate', 5000) * 1.5)}k",
+                    "-bufsize", f"{self.settings.get('bitrate', 5000) * 2}k",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-preset", "medium",
+                    "-movflags", "+faststart",
+                    output_path
+                ])
+                
+                # 由于滤镜复杂，直接运行简化版方案
+                # 首先按顺序拼接所有视频
+                concat_cmd = [
+                    ffmpeg_cmd,
+                    "-y",
+                    "-f", "concat",
+                    "-safe", "0"
+                ]
+                
+                # 创建文件列表
+                with open(list_file, 'w', encoding='utf-8') as f:
+                    for video in segment_files:
+                        # 处理Windows路径
+                        if os.name == 'nt':
+                            video = video.replace('\\', '/')
+                        f.write(f"file '{video}'\n")
+                
+                concat_cmd.extend([
+                    "-i", list_file,
+                    "-c:v", encoder,
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    output_path
+                ])
+                
+                # 执行拼接命令
+                logger.info(f"执行FFmpeg拼接命令: {' '.join(concat_cmd)}")
+                try:
+                    result = subprocess.run(concat_cmd, check=True, capture_output=True, text=True)
+                    logger.info("视频片段拼接成功")
+                    
+                    # 如果有背景音乐，添加背景音乐
+                    if bgm_path and os.path.exists(bgm_path):
+                        self._add_bgm_to_video(output_path, bgm_path)
+                    
+                    return True
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"视频片段拼接失败: {e.stderr}")
+                    return False
+                
+        except Exception as e:
+            logger.error(f"合并视频片段时出错: {str(e)}")
+            return False
+        finally:
+            # 清理临时文件
+            for temp_file in [filter_file, list_file]:
+                try:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                except Exception:
+                    pass
+
+    def _add_bgm_to_video(self, video_path, bgm_path):
+        """
+        使用FFmpeg给视频添加背景音乐
+        
+        Args:
+            video_path: 视频文件路径
+            bgm_path: 背景音乐路径
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not os.path.exists(video_path) or not os.path.exists(bgm_path):
+            logger.error(f"视频文件或背景音乐文件不存在")
+            return False
+        
+        # 获取FFmpeg命令
+        ffmpeg_cmd = self._get_ffmpeg_cmd()
+        
+        # 创建临时输出文件
+        temp_output = self._create_temp_file("with_bgm", ".mp4")
+        
+        # 获取视频时长
+        video_info = self._get_video_metadata(video_path)
+        if not video_info:
+            logger.error(f"无法获取视频元数据")
+            return False
+        
+        video_duration = video_info.get("duration", 0)
+        if video_duration <= 0:
+            logger.error(f"视频时长无效")
+            return False
+        
+        # 构建命令
+        cmd = [
+            ffmpeg_cmd,
+            "-y",
+            "-i", video_path,
+            "-i", bgm_path,
+            "-filter_complex"
+        ]
+        
+        # 设置背景音乐音量
+        bgm_volume = self.settings.get("bgm_volume", 0.3)
+        
+        # 如果背景音乐需要循环
+        audio_info = self._get_audio_metadata(bgm_path)
+        bgm_duration = audio_info.get("duration", 0) if audio_info else 0
+        
+        if bgm_duration > 0 and bgm_duration < video_duration:
+            # 需要循环播放背景音乐
+            loop_count = int(video_duration / bgm_duration) + 1
+            filter_complex = f"[0:a]volume=1[a1];[1:a]volume={bgm_volume},aloop=loop={loop_count}:size=2e+09[a2];[a1][a2]amix=inputs=2:duration=first[a]"
+        else:
+            # 不需要循环，直接混合
+            filter_complex = f"[0:a]volume=1[a1];[1:a]volume={bgm_volume}[a2];[a1][a2]amix=inputs=2:duration=first[a]"
+        
+        cmd.append(filter_complex)
+        
+        # 添加输出映射
+        cmd.extend([
+            "-map", "0:v",
+            "-map", "[a]",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            temp_output
+        ])
+        
+        # 执行命令
+        logger.info(f"执行FFmpeg添加背景音乐命令: {' '.join(cmd)}")
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            
+            # 替换原视频
+            try:
+                shutil.move(temp_output, video_path)
+                logger.info(f"成功添加背景音乐并替换原视频")
+                return True
+            except Exception as e:
+                logger.error(f"替换原视频失败: {str(e)}")
+                return False
+                
+        except subprocess.CalledProcessError as e:
+            logger.error(f"添加背景音乐失败: {e.stderr}")
+            return False
+        except Exception as e:
+            logger.error(f"添加背景音乐时出错: {str(e)}")
+            return False
