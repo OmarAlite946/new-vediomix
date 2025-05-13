@@ -239,6 +239,14 @@ class MainWindow(QMainWindow):
         
         self.label_progress = QLabel("等待合成任务...")
         self.label_progress.setStyleSheet("color: #666666;")
+        # 添加固定宽度和文本省略设置，防止文本变化导致UI跳动
+        self.label_progress.setMinimumWidth(250)
+        self.label_progress.setFixedWidth(350)
+        self.label_progress.setTextFormat(Qt.PlainText)
+        self.label_progress.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # 设置文本自动省略
+        self.label_progress.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.label_progress.setWordWrap(False)
         
         progress_status_layout.addWidget(self.progress_bar)
         progress_status_layout.addWidget(self.label_progress)
@@ -1170,8 +1178,13 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         current_percent = self.progress_bar.value()
         if abs(current_percent - percent) < 1 and message == self.label_progress.text():
             return
-            
+        
+        # 更新标签文本，保持UI布局稳定
         self.label_progress.setText(message)
+        # 设置标签工具提示，便于查看完整文本
+        self.label_progress.setToolTip(message)
+        
+        # 更新进度条值
         self.progress_bar.setValue(int(percent))
         # 更新上次进度更新时间戳
         self.last_progress_update = time.time()
@@ -1935,8 +1948,9 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 更新界面状态
         self.btn_start_compose.setEnabled(False)
         self.btn_stop_compose.setEnabled(True)
-        self.label_progress.setText("合成进度: 正在初始化...")
-        self.progress_bar.setValue(0)
+        
+        # 使用进度更新函数更新文本，确保UI稳定
+        self._do_update_progress("合成进度: 正在初始化...", 0)
         
         # 更新素材状态
         for row in range(self.video_table.rowCount()):
@@ -1964,7 +1978,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             # 停止处理
             if self.processor:
                 self.processor.stop_processing()
-                self.label_progress.setText("合成进度: 正在停止...")
+                # 使用进度更新函数更新文本，确保UI稳定
+                self._do_update_progress("合成进度: 正在停止...", 0)
     
     @QtCore.pyqtSlot()
     def on_compose_interrupted(self):
@@ -1972,7 +1987,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 更新界面状态
         self.btn_start_compose.setEnabled(True)
         self.btn_stop_compose.setEnabled(False)
-        self.label_progress.setText("合成进度: 已中止")
+        # 使用进度更新函数更新文本，确保UI稳定
+        self._do_update_progress("合成进度: 已中止", 0)
         
         # 设置表格中素材的状态为"已中止"
         for row in range(self.video_table.rowCount()):
@@ -2000,7 +2016,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         self.last_compose_count = count
         
         if success and count > 0:
-            self.label_progress.setText(f"合成进度: 已完成 {count} 个视频，用时: {total_time}")
+            # 使用进度更新函数更新文本，确保UI稳定
+            self._do_update_progress(f"合成进度: 已完成 {count} 个视频，用时: {total_time}", 100)
         
             # 设置表格中素材的状态为"已完成"
             for row in range(self.video_table.rowCount()):
@@ -2021,7 +2038,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 f"视频合成任务已完成！\n共合成 {count} 个视频，用时 {total_time}\n\n保存在：\n{output_dir}"
             )
         else:
-            self.label_progress.setText("合成进度: 未生成视频")
+            # 使用进度更新函数更新文本，确保UI稳定
+            self._do_update_progress("合成进度: 未生成视频", 0)
             
             # 设置表格中素材的状态为"失败"
             for row in range(self.video_table.rowCount()):
@@ -2048,7 +2066,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 更新界面状态
         self.btn_start_compose.setEnabled(True)
         self.btn_stop_compose.setEnabled(False)
-        self.label_progress.setText("合成进度: 出错")
+        # 使用进度更新函数更新文本，确保UI稳定
+        self._do_update_progress("合成进度: 出错", 0)
         
         # 设置表格中素材的状态为"错误"
         for row in range(self.video_table.rowCount()):
@@ -2061,7 +2080,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 status_item = ExtractModeItem("", extract_mode, folder_path)
                 status_item.set_status("错误")
                 self.video_table.setItem(row, 5, status_item)
-        
+    
         # 检查是否是FFmpeg相关错误
         if "FFmpeg不可用" in error_msg or "ffmpeg" in error_msg.lower():
             instruction_text = """
