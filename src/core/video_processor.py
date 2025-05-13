@@ -73,6 +73,10 @@ class VideoProcessor:
         self._last_progress_message = ""
         self._last_progress_percent = 0
         
+        # 批量合成进度跟踪
+        self._total_videos = 0
+        self._completed_videos = 0
+        
         # 初始化日志
         global logger
         self.logger = logger  # 将全局logger赋值给实例变量
@@ -245,7 +249,11 @@ class VideoProcessor:
                 if self.start_time > 0:
                     elapsed_time = time.time() - self.start_time
                     elapsed_str = self._format_time(elapsed_time)
-                    message = f"{message} (已用时: {elapsed_str})"
+                    # 如果有设置合成总数，显示已合成数量
+                    if self._total_videos > 0:
+                        message = f"{message} (已用时: {elapsed_str}, 已合成: {self._completed_videos}/{self._total_videos})"
+                    else:
+                        message = f"{message} (已用时: {elapsed_str})"
                 
                 # 保存最后一次进度信息，用于定时器重发
                 self._last_progress_message = message
@@ -286,7 +294,12 @@ class VideoProcessor:
                         if self.start_time > 0:
                             elapsed_time = time.time() - self.start_time
                             elapsed_str = self._format_time(elapsed_time)
-                            message = f"{self._last_progress_message.split('(已用时:')[0].strip()} (已用时: {elapsed_str})"
+                            base_message = self._last_progress_message.split('(已用时:')[0].strip()
+                            # 如果有设置合成总数，显示已合成数量
+                            if self._total_videos > 0:
+                                message = f"{base_message} (已用时: {elapsed_str}, 已合成: {self._completed_videos}/{self._total_videos})"
+                            else:
+                                message = f"{base_message} (已用时: {elapsed_str})"
                             self.progress_callback(message, self._last_progress_percent)
                             logger.debug(f"定时重发进度: {self._last_progress_percent:.1f}%: {message}")
                 except Exception as e:
@@ -327,6 +340,10 @@ class VideoProcessor:
         
         # 开始计时
         self.start_time = time.time()
+        
+        # 设置要合成的视频总数
+        self._total_videos = count
+        self._completed_videos = 0
         
         # 扫描素材文件夹
         self.report_progress("开始扫描素材文件夹...", 0)
@@ -386,6 +403,8 @@ class VideoProcessor:
                 )
                 
                 output_videos.append(result_path)
+                # 更新已完成视频数量
+                self._completed_videos += 1
                 logger.info(f"第 {i+1}/{count} 个视频生成完成: {result_path}")
             except Exception as e:
                 logger.error(f"生成第 {i+1}/{count} 个视频时出错: {str(e)}")
@@ -1799,7 +1818,7 @@ class VideoProcessor:
                 try:
                     # 计算已用时间，估算进度
                     elapsed_time = time.time() - export_start_time
-                    self.report_progress(f"视频编码中... (已用时: {self._format_time(elapsed_time)})", 85)
+                    self.report_progress(f"视频编码中...", 85)
                 except Exception as e:
                     logger.error(f"进度更新定时器错误: {str(e)}")
                 # 每15秒更新一次进度
@@ -1937,8 +1956,8 @@ class VideoProcessor:
                     "-preset", "medium",  # libx264的预设
                     "-crf", "22",         # 降低crf值，提高质量以减少转场处的方块
                     "-b:v", f"{self.settings['bitrate']}k",
-                    "-maxrate", f"{int(self.settings['bitrate'] * 2.0)}k",
-                    "-bufsize", f"{self.settings['bitrate'] * 3}k",
+                    "-maxrate", f"{int(self.settings.get('bitrate', 5000) * 2.0)}k",
+                    "-bufsize", f"{self.settings.get('bitrate', 5000) * 3}k",
                     "-b_strategy", "1",   # B帧决策策略
                     "-bf", "3",           # 最大B帧数量
                     "-refs", "4"          # 参考帧数，提高质量
