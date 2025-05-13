@@ -1121,8 +1121,13 @@ class VideoProcessor:
                         audio_file = None
                         audio_duration = 0
                     else:
-                        # 选择第一个配音
-                        audio_info = audios[0]
+                        # 随机选择一个配音
+                        import random
+                        if len(audios) > 1:
+                            audio_info = random.choice(audios)
+                            logger.info(f"从{len(audios)}个可用配音中随机选择")
+                        else:
+                            audio_info = audios[0]
                         audio_file = audio_info["path"]
                         audio_duration = audio_info["duration"]
                         logger.info(f"选择配音: {os.path.basename(audio_file)}, 时长: {audio_duration:.2f}秒")
