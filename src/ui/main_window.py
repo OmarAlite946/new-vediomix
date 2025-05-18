@@ -696,6 +696,12 @@ class MainWindow(QMainWindow):
         # 工具菜单
         tools_menu = menubar.addMenu("工具")
         
+        # 添加合成父文件夹视频选项
+        concat_parent_action = tools_menu.addAction("合成父文件夹视频")
+        concat_parent_action.triggered.connect(self.concat_parent_folder_videos)
+        
+        tools_menu.addSeparator()
+        
         gpu_test_action = tools_menu.addAction("GPU加速测试")
         gpu_test_action.triggered.connect(self.run_gpu_test)
         
@@ -716,6 +722,10 @@ class MainWindow(QMainWindow):
         # 添加抽取模式说明菜单项
         extract_mode_action = help_menu.addAction("抽取模式说明")
         extract_mode_action.triggered.connect(self.show_extract_mode_guide)
+        
+        # 添加合成阶段说明菜单项
+        compose_guide_action = help_menu.addAction("合成阶段说明")
+        compose_guide_action.triggered.connect(self.show_compose_guide)
         
         ffmpeg_guide_action = help_menu.addAction("安装FFmpeg指南")
         ffmpeg_guide_action.triggered.connect(self.show_ffmpeg_guide)
@@ -791,6 +801,187 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         """
         
         QMessageBox.about(self, "关于", about_text)
+    
+    @pyqtSlot()
+    def concat_parent_folder_videos(self):
+        """
+        合成父文件夹视频功能
+        
+        将所有子文件夹的视频按顺序拼接成一个完整的父文件夹视频
+        """
+        from core.video_processor import VideoProcessor
+        
+        # 选择父文件夹
+        parent_folder = QFileDialog.getExistingDirectory(
+            self, "选择父文件夹（包含多个子文件夹）", 
+            self.user_settings.get_setting("last_parent_folder", os.path.expanduser("~"))
+        )
+        
+        if not parent_folder:
+            return
+        
+        # 保存选择的父文件夹路径
+        self.user_settings.set_setting("last_parent_folder", parent_folder)
+        
+        # 选择输出文件路径
+        default_filename = f"合成视频_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+        save_dir = self.edit_save_dir.text() if self.edit_save_dir.text() else os.path.join(parent_folder, "output")
+        
+        # 确保保存目录存在
+        os.makedirs(save_dir, exist_ok=True)
+        
+        output_path, _ = QFileDialog.getSaveFileName(
+            self, "保存合成视频", 
+            os.path.join(save_dir, default_filename),
+            "视频文件 (*.mp4)"
+        )
+        
+        if not output_path:
+            return
+        
+        # 询问是否添加背景音乐
+        reply = QMessageBox.question(
+            self, 
+            "合成设置", 
+            "是否要为合成视频添加背景音乐？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        bgm_path = None
+        if reply == QMessageBox.Yes:
+            bgm_path = self.edit_bgm_path.text()
+            
+            # 如果没有设置背景音乐，或者设置的路径不存在，弹出选择框
+            if not bgm_path or not os.path.exists(bgm_path):
+                bgm_path, _ = QFileDialog.getOpenFileName(
+                    self, 
+                    "选择背景音乐", 
+                    self.user_settings.get_setting("bgm_path", ""),
+                    "音频文件 (*.mp3 *.wav *.ogg *.flac *.m4a);;所有文件 (*.*)"
+                )
+                
+                if bgm_path:
+                    self.user_settings.set_setting("bgm_path", bgm_path)
+        
+        # 更新进度信息
+        self.status_label.setText("正在合成父文件夹视频...")
+        
+        # 创建进度对话框
+        progress_dialog = QMessageBox(self)
+        progress_dialog.setIcon(QMessageBox.Information)
+        progress_dialog.setWindowTitle("合成中")
+        progress_dialog.setText("正在合成父文件夹视频，请稍候...")
+        progress_dialog.setStandardButtons(QMessageBox.NoButton)
+        progress_dialog.show()
+        
+        # 获取应用程序实例
+        app = QApplication.instance()
+        
+        # 在单独的线程中执行，避免阻塞UI
+        def process_thread():
+            try:
+                # 创建视频处理器
+                settings = {
+                    "hardware_accel": "auto" if self.checkbox_use_gpu.isChecked() else "none",
+                    "encoder": "h264_nvenc" if self.checkbox_use_gpu.isChecked() else "libx264",
+                    "watermark_enabled": self.checkbox_watermark.isChecked(),
+                    "watermark_prefix": self.edit_watermark_prefix.text(),
+                    "watermark_size": self.spin_watermark_size.value(),
+                    "watermark_color": self.combo_watermark_color.currentText(),
+                    "watermark_position": self.combo_watermark_position.currentText(),
+                    "watermark_pos_x": self.spin_pos_x.value(),
+                    "watermark_pos_y": self.spin_pos_y.value(),
+                    "bgm_volume": self.spin_bgm_volume.value(),
+                    "threads": 4
+                }
+                
+                processor = VideoProcessor(settings)
+                
+                # 调用合成方法
+                result = processor.concat_subfolder_videos(
+                    parent_folder_path=parent_folder,
+                    output_path=output_path,
+                    bgm_path=bgm_path
+                )
+                
+                # 更新UI
+                QtCore.QMetaObject.invokeMethod(
+                    self,
+                    "_on_concat_parent_completed",
+                    QtCore.Qt.QueuedConnection,
+                    QtCore.Q_ARG(bool, result),
+                    QtCore.Q_ARG(str, output_path)
+                )
+            except Exception as e:
+                import traceback
+                error_msg = traceback.format_exc()
+                QtCore.QMetaObject.invokeMethod(
+                    self,
+                    "_on_concat_parent_error",
+                    QtCore.Qt.QueuedConnection,
+                    QtCore.Q_ARG(str, str(e)),
+                    QtCore.Q_ARG(str, error_msg)
+                )
+            finally:
+                # 关闭进度对话框
+                QtCore.QMetaObject.invokeMethod(
+                    progress_dialog,
+                    "close",
+                    QtCore.Qt.QueuedConnection
+                )
+        
+        # 启动处理线程
+        threading.Thread(target=process_thread, daemon=True).start()
+    
+    @QtCore.pyqtSlot(bool, str)
+    def _on_concat_parent_completed(self, success, output_path):
+        """处理合成完成的回调"""
+        self.status_label.setText("就绪")
+        
+        if success:
+            folder_path = os.path.dirname(output_path)
+            reply = QMessageBox.information(
+                self,
+                "合成完成",
+                f"父文件夹视频已成功合成！\n\n文件保存在: {output_path}",
+                QMessageBox.Open | QMessageBox.Close,
+                QMessageBox.Close
+            )
+            
+            if reply == QMessageBox.Open:
+                try:
+                    # 打开资源管理器并选中文件
+                    if sys.platform == 'win32':
+                        # Windows平台
+                        subprocess.Popen(f'explorer /select,"{output_path}"')
+                    elif sys.platform == 'darwin':
+                        # macOS平台
+                        subprocess.Popen(['open', '-R', output_path])
+                    else:
+                        # Linux平台
+                        if os.path.exists(folder_path):
+                            os.system(f'xdg-open "{folder_path}"')
+                except Exception as e:
+                    logger.error(f"打开输出文件夹失败: {str(e)}")
+        else:
+            QMessageBox.warning(
+                self,
+                "合成失败",
+                "父文件夹视频合成失败，请查看日志获取详细信息。"
+            )
+    
+    @QtCore.pyqtSlot(str, str)
+    def _on_concat_parent_error(self, error, traceback_info):
+        """处理合成错误的回调"""
+        self.status_label.setText("就绪")
+        
+        logger.error(f"合成父文件夹视频出错: {error}\n{traceback_info}")
+        QMessageBox.critical(
+            self,
+            "合成错误",
+            f"合成父文件夹视频时发生错误：\n\n{error}"
+        )
     
     def _connect_signals(self):
         """连接信号和槽"""
@@ -2031,12 +2222,40 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     status_item.set_status("已完成")
                     self.video_table.setItem(row, 5, status_item)
             
-            # 显示完成消息
-            QMessageBox.information(
-                self, 
-                "合成完成", 
-                f"视频合成任务已完成！\n共合成 {count} 个视频，用时 {total_time}\n\n保存在：\n{output_dir}"
-            )
+            # 显示完成消息，并添加合成父文件夹视频的提示
+            message = f"视频合成任务已完成！\n共合成 {count} 个视频，用时 {total_time}\n\n保存在：\n{output_dir}\n\n"
+            message += "提示：如果您需要将所有子文件夹的视频合并成一个完整作品，\n"
+            message += "可以使用【工具】菜单中的【合成父文件夹视频】功能。"
+
+            # 创建包含提示和按钮的对话框
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("合成完成")
+            msg_box.setText(message)
+            msg_box.setIcon(QMessageBox.Information)
+
+            # 添加按钮
+            open_btn = msg_box.addButton("打开文件夹", QMessageBox.ActionRole)
+            concat_btn = msg_box.addButton("合成父文件夹视频", QMessageBox.ActionRole)
+            close_btn = msg_box.addButton("关闭", QMessageBox.RejectRole)
+            
+            msg_box.exec_()
+            
+            clicked_btn = msg_box.clickedButton()
+            
+            if clicked_btn == open_btn:
+                # 打开输出目录
+                try:
+                    if os.path.exists(output_dir):
+                        if os.name == 'nt':  # Windows
+                            os.startfile(output_dir)
+                        elif os.name == 'posix':  # macOS, Linux
+                            subprocess.Popen(['open', output_dir] if sys.platform == 'darwin' else ['xdg-open', output_dir])
+                except Exception as e:
+                    logger.error(f"打开输出目录失败: {str(e)}")
+                    QMessageBox.warning(self, "打开目录", f"打开输出目录失败: {str(e)}")
+            elif clicked_btn == concat_btn:
+                # 直接调用合成父文件夹视频功能
+                self.concat_parent_folder_videos()
         else:
             # 使用进度更新函数更新文本，确保UI稳定
             self._do_update_progress("合成进度: 未生成视频", 0)
@@ -3936,54 +4155,144 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
     def show_extract_mode_guide(self):
         """显示抽取模式说明"""
         guide_text = """
-<h3>抽取模式说明</h3>
+<h3>视频抽取模式说明</h3>
 
-<p>本软件支持两种视频抽取模式，您可以为每个文件夹单独设置：</p>
+<p>本软件支持两种视频抽取模式，您可以在文件夹上右键选择:</p>
 
-<h4>1. 单视频模式（默认）</h4>
-<p>在单视频模式下，软件会从文件夹中选择一个<b>时长大于等于配音时长</b>的视频，并将其裁剪为与配音相同的时长。如果没有足够长的视频，将使用最长的一个视频。</p>
-<p><b>适用场景：</b>当您有较长的素材视频，需要精确匹配配音时使用。</p>
+<h4>1. 单视频模式</h4>
+<p>从文件夹中选择一个时长大于等于配音时长的视频，将其裁剪为与配音相同的时长。</p>
+<ul>
+<li>优点: 视频流畅、没有跳切</li>
+<li>缺点: 单个场景可能显得单调</li>
+<li>适用: 内容简单、场景连贯的视频</li>
+</ul>
 
 <h4>2. 多视频拼接模式</h4>
-<p>在多视频拼接模式下，软件会从文件夹中选择多个视频并拼接在一起，以满足配音的时长需求。这种模式适合当您只有很多短视频，但需要匹配较长配音的情况。</p>
-<p><b>适用场景：</b>当文件夹中的视频都比较短，单个视频无法覆盖配音时长时使用。</p>
-
-<h4>如何设置抽取模式</h4>
-<p>右键点击素材列表中的文件夹，从上下文菜单中选择"抽取模式"，然后选择相应的抽取模式：</p>
+<p>从文件夹中选择多个短视频片段，拼接成与配音相同的总时长。</p>
 <ul>
-  <li>单视频（只选长于配音的视频）</li>
-  <li>多视频拼接（多个短视频拼接）</li>
+<li>优点: 画面丰富多变</li>
+<li>缺点: 多次跳切可能影响连贯性</li>
+<li>适用: 素材丰富、内容多样的场景</li>
 </ul>
 
-<p>设置后，文件夹名称会更新以反映当前的抽取模式：</p>
+<p>提示: 您可以在素材列表中右键点击文件夹，选择"抽取模式"来切换模式。</p>
+"""
+        
+        guide_dialog = QMessageBox(self)
+        guide_dialog.setWindowTitle("抽取模式说明")
+        guide_dialog.setTextFormat(Qt.RichText)
+        guide_dialog.setText(guide_text)
+        guide_dialog.setStandardButtons(QMessageBox.Ok)
+        guide_dialog.setMinimumWidth(600)
+        guide_dialog.exec_()
+    
+    def show_compose_guide(self):
+        """显示合成阶段说明"""
+        guide_text = """
+<h3>视频处理三阶段工作流程</h3>
+
+<p>本软件视频处理分为三个阶段：<b>扫描</b>、<b>抽取</b>和<b>合成</b>。</p>
+
+<h4>1. 扫描阶段</h4>
+<p>系统会扫描所有素材文件夹，收集视频和配音信息。这个阶段只需执行一次，无论需要合成多少个视频。</p>
 <ul>
-  <li>单视频模式：显示为黑色</li>
-  <li>多视频拼接模式：显示为蓝色，并在名称后添加"[多视频拼接]"标记</li>
+<li>扫描素材文件夹结构和内容</li>
+<li>建立素材索引和缓存</li>
+<li>分析视频和音频元数据</li>
 </ul>
 
-<p>您可以随时更改抽取模式，每个文件夹可以单独设置不同的抽取模式。软件会自动保存您的设置。</p>
-        """
+<h4>2. 抽取阶段</h4>
+<p>从扫描结果中，按照设定的抽取模式，为每个场景选择合适的视频片段和配音。水印在这个阶段添加。</p>
+<ul>
+<li>根据抽取模式选择视频（单视频或多视频）</li>
+<li>随机选择配音</li>
+<li>生成子文件夹的单个场景视频</li>
+<li>应用水印和过渡效果</li>
+</ul>
+
+<h4>3. 合成阶段</h4>
+<p>将抽取阶段生成的所有子文件夹视频按顺序拼接成完整的作品。通过"工具"菜单中的"合成父文件夹视频"功能实现。</p>
+<ul>
+<li>使用FFmpeg的concat demuxer方法直接拼接视频</li>
+<li>不重新编码，保持原视频质量</li>
+<li>快速合成，节省处理时间</li>
+<li>最终视频时长约等于所有被抽选的配音总时长</li>
+</ul>
+
+<p><b>注意</b>: 合成阶段是可选的最终步骤，适用于需要将多个子场景合并成完整作品的情况。</p>
+"""
         
-        dialog = QDialog(self)
-        dialog.setWindowTitle("抽取模式说明")
-        dialog.setMinimumWidth(600)
-        dialog.setMinimumHeight(500)
+        guide_dialog = QMessageBox(self)
+        guide_dialog.setWindowTitle("视频处理三阶段说明")
+        guide_dialog.setTextFormat(Qt.RichText)
+        guide_dialog.setText(guide_text)
+        guide_dialog.setStandardButtons(QMessageBox.Ok)
+        guide_dialog.setMinimumWidth(700)
+        guide_dialog.exec_()
+    
+    def config_ffmpeg_path(self):
+        """配置FFmpeg路径"""
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        import os
+        from pathlib import Path
         
-        layout = QVBoxLayout(dialog)
+        # 获取ffmpeg可执行文件
+        ffmpeg_file, _ = QFileDialog.getOpenFileName(
+            self, 
+            "选择FFmpeg可执行文件", 
+            str(Path.home()), 
+            "可执行文件 (*.exe);;所有文件 (*.*)"
+        )
         
-        # 使用QTextBrowser支持HTML格式
-        text_browser = QTextBrowser()
-        text_browser.setHtml(guide_text)
-        text_browser.setOpenExternalLinks(True)
+        if not ffmpeg_file:
+            return
         
-        layout.addWidget(text_browser)
+        # 验证是否为有效的FFmpeg文件
+        try:
+            import subprocess
+            result = subprocess.run(
+                [ffmpeg_file, "-version"], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=3
+            )
+            
+            if result.returncode != 0 or "ffmpeg version" not in result.stdout.lower():
+                QMessageBox.warning(
+                    self, 
+                    "无效的FFmpeg文件", 
+                    f"所选文件不是有效的FFmpeg可执行文件:\n{ffmpeg_file}\n\n错误: {result.stderr}"
+                )
+                return
+        except Exception as e:
+            QMessageBox.warning(
+                self, 
+                "验证FFmpeg失败", 
+                f"无法验证所选文件:\n{ffmpeg_file}\n\n错误: {str(e)}"
+            )
+            return
         
-        # 添加按钮
-        btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
-        btn_box.accepted.connect(dialog.accept)
-        layout.addWidget(btn_box)
-        
-        dialog.exec_()
+        # 保存路径到配置文件
+        try:
+            # 获取项目根目录
+            project_root = Path(__file__).resolve().parent.parent.parent
+            ffmpeg_path_file = project_root / "ffmpeg_path.txt"
+            
+            with open(ffmpeg_path_file, "w") as f:
+                f.write(ffmpeg_file)
+            
+            QMessageBox.information(
+                self, 
+                "FFmpeg配置成功", 
+                f"FFmpeg路径已成功配置！\n\n路径: {ffmpeg_file}\n\n请重启软件以应用新设置。"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "配置失败", 
+                f"保存FFmpeg路径时出错:\n{str(e)}"
+            )
 
     # 添加处理表格点击事件的方法
     def _on_table_cell_clicked(self, row, column):

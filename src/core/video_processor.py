@@ -3725,3 +3725,158 @@ class VideoProcessor:
         except Exception as e:
             logger.warning(f"快速获取视频时长失败: {str(e)}")
             return -1
+
+    def concat_subfolder_videos(self, parent_folder_path: str, output_path: str, bgm_path: str = None) -> bool:
+        """
+        合成阶段：将所有子文件夹输出的视频按顺序拼接成父文件夹视频
+        
+        使用FFmpeg的concat demuxer方法，直接拼接视频而不重新编码，实现快速合成
+        最终视频时长约等于所有子文件夹中被抽选上的配音的总时长
+        
+        Args:
+            parent_folder_path: 父文件夹路径
+            output_path: 输出视频文件路径
+            bgm_path: 背景音乐路径(可选)
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not os.path.exists(parent_folder_path) or not os.path.isdir(parent_folder_path):
+            logger.error(f"父文件夹不存在或不是目录: {parent_folder_path}")
+            return False
+        
+        # 获取所有子文件夹
+        subfolders = []
+        try:
+            for item in os.listdir(parent_folder_path):
+                item_path = os.path.join(parent_folder_path, item)
+                if os.path.isdir(item_path):
+                    subfolders.append(item_path)
+            
+            if not subfolders:
+                logger.error(f"父文件夹中没有子文件夹: {parent_folder_path}")
+                return False
+                
+            logger.info(f"找到 {len(subfolders)} 个子文件夹")
+        except Exception as e:
+            logger.error(f"获取子文件夹列表失败: {str(e)}")
+            return False
+        
+        # 查找每个子文件夹中的输出视频文件
+        subfolder_videos = []
+        
+        for subfolder in subfolders:
+            folder_name = os.path.basename(subfolder)
+            
+            # 检查子文件夹中是否有输出视频文件
+            output_dir = os.path.join(subfolder, "output")
+            if os.path.exists(output_dir) and os.path.isdir(output_dir):
+                # 获取所有视频文件
+                video_files = []
+                for root, _, files in os.walk(output_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if self._is_video_file(file_path):
+                            video_files.append(file_path)
+                
+                if video_files:
+                    # 如果有多个视频文件，取最新的一个
+                    if len(video_files) > 1:
+                        video_files.sort(key=os.path.getmtime, reverse=True)
+                        logger.info(f"子文件夹 '{folder_name}' 有多个视频，选择最新的一个: {os.path.basename(video_files[0])}")
+                    
+                    subfolder_videos.append({
+                        "folder": folder_name,
+                        "path": video_files[0],
+                        "mtime": os.path.getmtime(video_files[0])
+                    })
+                    logger.info(f"子文件夹 '{folder_name}' 找到视频: {os.path.basename(video_files[0])}")
+                else:
+                    logger.warning(f"子文件夹 '{folder_name}' 的output目录中没有视频文件")
+            else:
+                logger.warning(f"子文件夹 '{folder_name}' 中没有output目录")
+        
+        if not subfolder_videos:
+            logger.error("没有找到任何子文件夹视频，无法合成")
+            return False
+        
+        # 按照文件修改时间排序，确保按正确顺序组合视频
+        subfolder_videos.sort(key=lambda x: x["mtime"])
+        logger.info(f"将按时间顺序合成 {len(subfolder_videos)} 个子文件夹视频")
+        
+        # 创建临时文件列表
+        list_file = self._create_temp_file("concat_list", ".txt")
+        
+        try:
+            # 创建文件列表
+            with open(list_file, 'w', encoding='utf-8') as f:
+                for video_info in subfolder_videos:
+                    video_path = video_info["path"]
+                    # 处理Windows路径
+                    if os.name == 'nt':
+                        video_path = video_path.replace('\\', '/')
+                    f.write(f"file '{video_path}'\n")
+            
+            logger.info(f"创建了合并列表文件: {list_file}")
+            
+            # 获取FFmpeg命令
+            ffmpeg_cmd = self._get_ffmpeg_cmd()
+            
+            # 构建基本合并命令 - 使用concat demuxer
+            cmd = [
+                ffmpeg_cmd,
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", list_file
+            ]
+            
+            # 判断是否需要添加背景音乐
+            if bgm_path and os.path.exists(bgm_path):
+                # 如果需要添加背景音乐，则需要两步处理
+                # 1. 先使用concat demuxer合并视频
+                temp_merged_video = self._create_temp_file("merged_video", ".mp4")
+                
+                # 使用copy编解码器直接拼接，避免重新编码
+                concat_cmd = cmd + [
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    temp_merged_video
+                ]
+                
+                logger.info(f"执行视频拼接命令: {' '.join(concat_cmd)}")
+                try:
+                    result = subprocess.run(concat_cmd, check=True, capture_output=True, text=True)
+                    logger.info("视频拼接成功")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"视频拼接失败: {e.stderr}")
+                    return False
+                
+                # 2. 然后添加背景音乐
+                return self._add_bgm_to_video(temp_merged_video, bgm_path, output_path)
+            else:
+                # 如果不需要添加背景音乐，直接使用copy编解码器拼接
+                cmd.extend([
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    output_path
+                ])
+                
+                logger.info(f"执行视频拼接命令: {' '.join(cmd)}")
+                try:
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    logger.info(f"子文件夹视频拼接成功，输出到: {output_path}")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"视频拼接失败: {e.stderr}")
+                    return False
+        except Exception as e:
+            logger.error(f"合并子文件夹视频时出错: {str(e)}")
+            return False
+        finally:
+            # 清理临时文件
+            try:
+                if os.path.exists(list_file):
+                    os.remove(list_file)
+            except Exception:
+                pass
