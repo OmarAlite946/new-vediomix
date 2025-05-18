@@ -1,1 +1,1 @@
-D:\新混剪工具\ffmpeg_compat\ffmpeg.exe
+D:/ffmeg/ffmpeg-7.1.1-essentials_build/bin/ffmpeg.exe

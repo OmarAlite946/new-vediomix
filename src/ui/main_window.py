@@ -2300,6 +2300,35 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 status_item.set_status("错误")
                 self.video_table.setItem(row, 5, status_item)
     
+        # 尝试从错误消息中提取异常类型和错误代码
+        exception_type = ""
+        error_code = ""
+        
+        # 尝试解析错误类型
+        import re
+        exc_match = re.search(r'([A-Za-z]+Error|[A-Za-z]+Exception):', error_msg)
+        if exc_match:
+            exception_type = exc_match.group(1)
+        
+        # 尝试解析错误代码
+        code_match = re.search(r'错误代码\s*[:：]\s*(\d+)', error_msg)
+        if code_match:
+            error_code = code_match.group(1)
+        
+        # 格式化错误信息，添加类型和代码
+        error_title = "合成错误"
+        formatted_error = error_msg
+        
+        if exception_type:
+            error_title = f"合成错误 ({exception_type})"
+            if not exception_type in error_msg:
+                formatted_error = f"{exception_type}: {error_msg}"
+        
+        if error_code:
+            error_title += f" [代码: {error_code}]"
+            if not f"代码: {error_code}" in formatted_error:
+                formatted_error += f" (错误代码: {error_code})"
+    
         # 检查是否是FFmpeg相关错误
         if "FFmpeg不可用" in error_msg or "ffmpeg" in error_msg.lower():
             instruction_text = """
@@ -2354,8 +2383,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             
             error_dialog = QMessageBox(self)
             error_dialog.setIcon(QMessageBox.Critical)
-            error_dialog.setWindowTitle("权限或路径错误")
-            error_dialog.setText(f"视频合成失败: {error_msg}")
+            error_dialog.setWindowTitle(error_title)
+            error_dialog.setText(f"视频合成失败: {formatted_error}")
             error_dialog.setInformativeText(suggestion_text)
             error_dialog.setDetailedText(detail)
             error_dialog.setStandardButtons(QMessageBox.Ok)
@@ -2374,8 +2403,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             
             error_dialog = QMessageBox(self)
             error_dialog.setIcon(QMessageBox.Critical)
-            error_dialog.setWindowTitle("硬件加速错误")
-            error_dialog.setText(f"视频合成失败: {error_msg}")
+            error_dialog.setWindowTitle(error_title)
+            error_dialog.setText(f"视频合成失败: {formatted_error}")
             error_dialog.setInformativeText(suggestion_text)
             error_dialog.setDetailedText(detail)
             error_dialog.setStandardButtons(QMessageBox.Ok)
@@ -2395,8 +2424,33 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             
             error_dialog = QMessageBox(self)
             error_dialog.setIcon(QMessageBox.Critical)
-            error_dialog.setWindowTitle("素材格式错误")
-            error_dialog.setText(f"视频合成失败: {error_msg}")
+            error_dialog.setWindowTitle(error_title)
+            error_dialog.setText(f"视频合成失败: {formatted_error}")
+            error_dialog.setInformativeText(suggestion_text)
+            error_dialog.setDetailedText(detail)
+            error_dialog.setStandardButtons(QMessageBox.Ok)
+            error_dialog.setMinimumWidth(600)
+            error_dialog.exec_()
+        # 检查是否是Python模块相关错误
+        elif "module" in error_msg.lower() or "attribute" in error_msg.lower() or "import" in error_msg.lower():
+            suggestion_text = f"""
+检测到Python模块或属性错误: {formatted_error}
+
+这通常是由于软件内部错误或环境配置问题导致的。请尝试以下解决方案:
+
+1. 重启软件后再试
+2. 检查您是否自定义了Python环境
+3. 尝试重新安装软件
+4. 检查日志获取更多详细信息
+   日志位置: {str(Path.home() / "VideoMixTool" / "logs")}
+
+错误详情已记录在日志中，如需技术支持，请提供日志文件。
+            """
+            
+            error_dialog = QMessageBox(self)
+            error_dialog.setIcon(QMessageBox.Critical)
+            error_dialog.setWindowTitle("Python模块错误")
+            error_dialog.setText(f"视频合成失败: {formatted_error}")
             error_dialog.setInformativeText(suggestion_text)
             error_dialog.setDetailedText(detail)
             error_dialog.setStandardButtons(QMessageBox.Ok)
@@ -2404,11 +2458,13 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             error_dialog.exec_()
         else:
             # 显示一般错误消息，但包含更多上下文和调试信息
-            general_suggestion = """
+            general_suggestion = f"""
+视频合成过程中出现错误: {formatted_error}
+
 请尝试以下通用解决方案:
 
 1. 检查日志文件获取详细错误信息
-   日志位置: %s
+   日志位置: {str(Path.home() / "VideoMixTool" / "logs")}
 
 2. 尝试关闭其他占用系统资源的程序
 
@@ -2417,17 +2473,45 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
 4. 尝试减少生成视频的数量
 
 5. 如果依然失败，可以尝试重启软件或计算机
-            """ % (str(Path.home() / "VideoMixTool" / "logs"))
+
+详细错误信息请见"显示详情"按钮
+            """
             
             error_dialog = QMessageBox(self)
             error_dialog.setIcon(QMessageBox.Critical)
-            error_dialog.setWindowTitle("合成错误")
-            error_dialog.setText(f"视频合成过程中出错: {error_msg}")
+            error_dialog.setWindowTitle(error_title)
+            error_dialog.setText("视频合成失败")
             error_dialog.setInformativeText(general_suggestion)
-            error_dialog.setDetailedText(detail)
+            
+            # 组合更详细的错误信息
+            detailed_text = f"错误消息: {formatted_error}\n\n"
+            if exception_type:
+                detailed_text += f"异常类型: {exception_type}\n"
+            if error_code:
+                detailed_text += f"错误代码: {error_code}\n"
+            detailed_text += f"\n详细堆栈跟踪:\n{detail}"
+            
+            error_dialog.setDetailedText(detailed_text)
             error_dialog.setStandardButtons(QMessageBox.Ok)
             error_dialog.setMinimumWidth(600)
+            
+            # 创建复制错误信息到剪贴板的功能
+            copy_button = error_dialog.addButton("复制错误信息", QMessageBox.ActionRole)
+            copy_button.clicked.connect(lambda: self._copy_error_to_clipboard(detailed_text))
+            
+            # 添加查看日志文件的功能
+            view_log_button = error_dialog.addButton("查看日志", QMessageBox.ActionRole)
+            view_log_button.clicked.connect(self.view_log_file)
+            
             error_dialog.exec_()
+    
+    def _copy_error_to_clipboard(self, text):
+        """复制错误信息到剪贴板"""
+        from PyQt5.QtGui import QClipboard
+        from PyQt5.QtWidgets import QApplication
+        
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
     
     def config_ffmpeg_path(self):
         """配置FFmpeg路径"""

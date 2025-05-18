@@ -378,7 +378,7 @@ class VideoProcessor:
                 progress_end = 5 + ((i + 1) / count) * 95
                 
                 # 生成输出文件名
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_filename = f"视频_{timestamp}_{i+1}.mp4"
                 output_path = os.path.join(output_dir, output_filename)
                 
