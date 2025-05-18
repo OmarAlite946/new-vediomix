@@ -1177,53 +1177,76 @@ class VideoProcessor:
                     segment_output_path = None  # 用于存储当前片段的输出路径
                     
                     if extract_mode == "multi_video" and audio_duration > 0:
-                        # 多视频拼接模式
+                        # 多视频拼接模式 - 优化：只选择需要的视频，不加载所有视频
                         logger.info(f"场景 '{folder_name}' 使用多视频拼接模式")
                         
-                        # 将视频按时长从长到短排序，但排除已使用的视频
-                        unused_videos = [v for v in videos if v["path"] not in used_videos]
+                        # 优化：随机打乱视频顺序，但排除已使用的视频
+                        # 将视频复制到一个新列表中，避免修改原始数据
+                        available_videos = [v for v in videos if v["path"] not in used_videos]
                         
-                        if not unused_videos:
+                        if not available_videos:
                             logger.warning(f"场景 '{folder_name}' 没有未使用的视频，将使用已使用过的视频")
-                            unused_videos = videos
+                            available_videos = videos.copy()
                         
-                        # 修改：不再按时长排序，而是随机打乱视频顺序
+                        # 随机打乱视频顺序
                         import random
-                        random.shuffle(unused_videos)  # 随机打乱视频顺序
-                        sorted_videos = unused_videos  # 变量名保持不变，但内容已经是随机顺序
+                        random.shuffle(available_videos)
                         
                         # 创建当前片段的临时文件路径
                         segment_output_path = os.path.join(temp_dir, f"segment_{i}_{uuid.uuid4()}.mp4")
                         
-                        # 优化：在这里获取视频元数据
-                        video_paths = []
-                        for v in sorted_videos:
+                        # 优化：只选择足够满足配音时长的视频
+                        selected_video_paths = []
+                        total_duration = 0
+                        
+                        # 选择视频直到总时长满足配音时长
+                        for v in available_videos:
                             # 如果视频元数据未加载，则现在加载
-                            if v.get("duration", -1) < 0:
+                            video_duration = v.get("duration", -1)
+                            if video_duration < 0:
+                                # 只有在需要时才获取视频元数据
                                 video_info = self._get_video_metadata(v["path"])
-                                if video_info and video_info.get("duration", 0) > 0:
+                                if video_info:
                                     # 更新元数据
                                     v.update(video_info)
-                                    video_paths.append(v["path"])
-                            else:
-                                video_paths.append(v["path"])
+                                    video_duration = video_info.get("duration", 0)
+                                else:
+                                    # 如果获取元数据失败，跳过此视频
+                                    continue
+                            
+                            # 添加到选中视频列表
+                            selected_video_paths.append(v["path"])
+                            total_duration += video_duration
+                            
+                            # 记录已使用的视频
+                            used_videos.add(v["path"])
+                            
+                            # 如果总时长已经满足配音时长，停止选择
+                            if total_duration >= audio_duration:
+                                break
                         
-                        # 优化：使用ffmpeg直接拼接视频，而不是先加载到内存
-                        self._concat_videos_with_ffmpeg(
-                            video_files=video_paths,  # 提供视频文件路径列表
-                            audio_file=audio_file,  # 提供音频文件
-                            output_path=segment_output_path,  # 输出到临时文件
-                            target_duration=audio_duration  # 目标时长为音频时长
+                        if not selected_video_paths:
+                            logger.warning(f"场景 '{folder_name}' 没有找到足够长的视频，跳过")
+                            continue
+                            
+                        logger.info(f"已选择 {len(selected_video_paths)} 个视频，总时长: {total_duration:.2f}秒，配音时长: {audio_duration:.2f}秒")
+                        
+                        # 优化：使用FFmpeg的concat demuxer直接拼接视频，避免重新编码
+                        concat_success = self._concat_videos_with_ffmpeg(
+                            video_files=selected_video_paths,
+                            audio_file=audio_file,
+                            output_path=segment_output_path,
+                            target_duration=audio_duration
                         )
+                        
+                        if not concat_success:
+                            logger.error(f"拼接视频失败: {segment_output_path}")
+                            continue
                         
                         # 检查生成的片段文件
                         if os.path.exists(segment_output_path) and os.path.getsize(segment_output_path) > 0:
                             temp_segment_files.append(segment_output_path)
                             logger.info(f"成功创建片段: {segment_output_path}")
-                            
-                            # 记录已使用的视频
-                            for v in sorted_videos:
-                                used_videos.add(v["path"])
                         else:
                             logger.warning(f"创建片段文件失败: {segment_output_path}")
                         
@@ -1231,7 +1254,7 @@ class VideoProcessor:
                         self._force_memory_cleanup()
                         
                     else:
-                        # 单视频模式（原始逻辑）
+                        # 单视频模式 - 优化：只选择一个合适的视频，不加载所有视频
                         logger.info(f"场景 '{folder_name}' 使用单视频模式")
                         
                         # 优化：先获取未使用的视频
@@ -1241,64 +1264,71 @@ class VideoProcessor:
                             logger.warning(f"场景 '{folder_name}' 的所有视频都已使用，将随机重复使用")
                             unused_videos = videos  # 使用所有视频，后续会随机选择
                         
-                        # 随机选择一个视频
-                        import random
-                        selected_video = random.choice(unused_videos)
-                        video_file = selected_video["path"]
+                        # 优化：如果有配音，先尝试找到时长足够的视频
+                        suitable_videos = []
                         
-                        # 如果视频元数据未加载，则现在加载
-                        if selected_video.get("duration", -1) < 0:
-                            video_info = self._get_video_metadata(video_file)
-                            if video_info:
-                                # 更新元数据
-                                selected_video.update(video_info)
-                                video_duration = video_info.get("duration", 0)
-                            else:
-                                logger.warning(f"无法获取视频元数据: {video_file}")
-                                continue
-                        else:
-                            video_duration = selected_video.get("duration", 0)
-                        
-                        # 根据配音时长筛选合适的视频
-                        # 如果当前视频不够长，尝试找到更长的视频
-                        if audio_duration > 0 and video_duration < audio_duration:
-                            logger.warning(f"选择的视频时长 {video_duration:.2f}秒 小于配音时长 {audio_duration:.2f}秒，尝试查找更长的视频")
-                            
-                            # 尝试找到更长的视频
-                            longer_videos = []
+                        if audio_duration > 0:
+                            # 先检查已有时长信息的视频
                             for v in unused_videos:
-                                # 如果视频元数据未加载，则现在加载
-                                if v.get("duration", -1) < 0:
-                                    v_info = self._get_video_metadata(v["path"])
-                                    if v_info:
-                                        v.update(v_info)
-                                        if v_info.get("duration", 0) >= audio_duration:
-                                            longer_videos.append(v)
-                                elif v.get("duration", 0) >= audio_duration:
-                                    longer_videos.append(v)
+                                if v.get("duration", -1) >= audio_duration:
+                                    suitable_videos.append(v)
                             
-                            # 如果找到了更长的视频，随机选择一个
-                            if longer_videos:
-                                selected_video = random.choice(longer_videos)
-                                video_file = selected_video["path"]
-                                video_duration = selected_video.get("duration", 0)
-                                logger.info(f"找到更长的视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
+                            # 如果没有找到足够长的视频，尝试加载更多视频的时长
+                            if not suitable_videos:
+                                # 随机选择一部分视频进行检查，避免检查所有视频
+                                sample_size = min(50, len(unused_videos))
+                                sample_videos = random.sample(unused_videos, sample_size)
+                                
+                                for v in sample_videos:
+                                    # 如果视频元数据未加载，则现在加载
+                                    if v.get("duration", -1) < 0:
+                                        video_info = self._get_video_metadata(v["path"])
+                                        if video_info:
+                                            # 更新元数据
+                                            v.update(video_info)
+                                            if video_info.get("duration", 0) >= audio_duration:
+                                                suitable_videos.append(v)
+                        
+                        # 选择视频
+                        selected_video = None
+                        
+                        if suitable_videos:
+                            # 从合适的视频中随机选择一个
+                            selected_video = random.choice(suitable_videos)
+                            logger.info(f"从 {len(suitable_videos)} 个足够长的视频中随机选择")
+                        else:
+                            # 如果没有找到足够长的视频，随机选择一个视频
+                            selected_video = random.choice(unused_videos)
+                            logger.info("未找到足够长的视频，随机选择")
+                            
+                            # 如果视频元数据未加载，则现在加载
+                            if selected_video.get("duration", -1) < 0:
+                                video_info = self._get_video_metadata(selected_video["path"])
+                                if video_info:
+                                    selected_video.update(video_info)
+                        
+                        video_file = selected_video["path"]
+                        video_duration = selected_video.get("duration", 0)
                         
                         # 记录已使用的视频
                         used_videos.add(video_file)
                         
-                        logger.info(f"随机选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
+                        logger.info(f"选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
                         
                         # 创建当前片段的临时文件路径
                         segment_output_path = os.path.join(temp_dir, f"segment_{i}_{uuid.uuid4()}.mp4")
                         
-                        # 使用ffmpeg直接处理单个视频
-                        self._process_single_video_with_ffmpeg(
+                        # 优化：使用FFmpeg直接处理单个视频，避免加载到内存
+                        process_success = self._process_single_video_with_ffmpeg(
                             video_file=video_file,
                             audio_file=audio_file,
                             output_path=segment_output_path,
                             target_duration=audio_duration if audio_duration > 0 else None
                         )
+                        
+                        if not process_success:
+                            logger.error(f"处理视频失败: {segment_output_path}")
+                            continue
                         
                         # 检查生成的片段文件
                         if os.path.exists(segment_output_path) and os.path.getsize(segment_output_path) > 0:
@@ -3164,10 +3194,6 @@ class VideoProcessor:
             logger.error("没有提供视频文件")
             return False
         
-        # 随机打乱视频顺序
-        import random
-        random.shuffle(video_files)
-        
         # 获取FFmpeg命令
         ffmpeg_cmd = self._get_ffmpeg_cmd()
         
@@ -3175,19 +3201,38 @@ class VideoProcessor:
         list_file = self._create_temp_file("concat_list", ".txt")
         
         try:
-            # 计算已有总时长
+            # 如果只有一个视频文件，直接处理单个视频
+            if len(video_files) == 1:
+                return self._process_single_video_with_ffmpeg(
+                    video_files[0], 
+                    audio_file, 
+                    output_path, 
+                    target_duration
+                )
+            
+            # 计算已有总时长和选择最终要使用的视频
             total_duration = 0
             final_video_files = []
             
             # 选择视频直到达到目标时长
             for video_file in video_files:
-                # 获取视频信息
-                video_info = self._get_video_metadata(video_file)
-                if not video_info:
-                    logger.warning(f"无法获取视频元数据: {video_file}")
-                    continue
+                # 获取视频信息 - 优先使用已有的时长信息
+                video_duration = -1
                 
-                video_duration = video_info.get("duration", 0)
+                # 尝试从文件名获取视频对象
+                for v in self._get_video_by_path(video_files, video_file):
+                    if v and v.get("duration", -1) > 0:
+                        video_duration = v.get("duration")
+                        break
+                
+                # 如果没有找到时长信息，获取视频信息
+                if video_duration <= 0:
+                    video_info = self._get_video_metadata(video_file)
+                    if not video_info:
+                        logger.warning(f"无法获取视频元数据: {video_file}")
+                        continue
+                    video_duration = video_info.get("duration", 0)
+                
                 if video_duration <= 0:
                     logger.warning(f"视频时长无效: {video_file}")
                     continue
@@ -3206,15 +3251,6 @@ class VideoProcessor:
                 logger.error("没有有效的视频文件可拼接")
                 return False
                 
-            # 如果只有一个视频文件，直接处理单个视频
-            if len(final_video_files) == 1:
-                return self._process_single_video_with_ffmpeg(
-                    final_video_files[0], 
-                    audio_file, 
-                    output_path, 
-                    target_duration
-                )
-            
             # 创建文件列表
             with open(list_file, 'w', encoding='utf-8') as f:
                 for video in final_video_files:
@@ -3223,7 +3259,7 @@ class VideoProcessor:
                         video = video.replace('\\', '/')
                     f.write(f"file '{video}'\n")
             
-            # 构建基本拼接命令
+            # 构建基本拼接命令 - 使用concat demuxer
             cmd = [
                 ffmpeg_cmd,
                 "-y",
@@ -3256,29 +3292,9 @@ class VideoProcessor:
             if target_duration and target_duration < total_duration:
                 cmd.extend(["-t", str(target_duration)])
             
-            # 添加视频编码器选项
-            hardware_accel = self.settings.get("hardware_accel", "none")
-            encoder = self.settings.get("encoder", "libx264")
-            
-            # 选择合适的编码器
-            if hardware_accel != "none":
-                if "nvenc" in encoder or "nvidia" in hardware_accel.lower():
-                    encoder = "h264_nvenc"
-                elif "qsv" in encoder or "intel" in hardware_accel.lower():
-                    encoder = "h264_qsv"
-                elif "amf" in encoder or "amd" in hardware_accel.lower():
-                    encoder = "h264_amf"
-            
-            # 添加编码器和质量选项
+            # 添加视频编码选项 - 使用copy模式避免重新编码
             cmd.extend([
-                "-c:v", encoder,
-                "-pix_fmt", "yuv420p",
-                "-profile:v", "high",
-                "-level", "4.1",
-                "-b:v", f"{self.settings.get('bitrate', 5000)}k",
-                "-maxrate", f"{int(self.settings.get('bitrate', 5000) * 1.5)}k",
-                "-bufsize", f"{self.settings.get('bitrate', 5000) * 2}k",
-                "-preset", "medium",
+                "-c:v", "copy",  # 直接复制视频流，不重新编码
                 "-movflags", "+faststart",
                 output_path
             ])
@@ -3303,6 +3319,23 @@ class VideoProcessor:
                     os.remove(list_file)
             except Exception:
                 pass
+    
+    def _get_video_by_path(self, video_list, path):
+        """
+        通过路径在视频列表中查找视频对象
+        
+        Args:
+            video_list: 视频对象列表
+            path: 视频路径
+            
+        Returns:
+            list: 匹配的视频对象列表
+        """
+        # 标准化路径
+        norm_path = os.path.normpath(path).lower()
+        
+        # 查找匹配的视频
+        return [v for v in video_list if os.path.normpath(v.get("path", "")).lower() == norm_path]
 
     def _process_single_video_with_ffmpeg(self, video_file, audio_file, output_path, target_duration=None):
         """
@@ -3355,29 +3388,9 @@ class VideoProcessor:
         if target_duration:
             cmd.extend(["-t", str(target_duration)])
         
-        # 添加视频编码器选项
-        hardware_accel = self.settings.get("hardware_accel", "none")
-        encoder = self.settings.get("encoder", "libx264")
-        
-        # 选择合适的编码器
-        if hardware_accel != "none":
-            if "nvenc" in encoder or "nvidia" in hardware_accel.lower():
-                encoder = "h264_nvenc"
-            elif "qsv" in encoder or "intel" in hardware_accel.lower():
-                encoder = "h264_qsv"
-            elif "amf" in encoder or "amd" in hardware_accel.lower():
-                encoder = "h264_amf"
-        
-        # 添加编码器和质量选项
+        # 优化：直接复制视频流，避免重新编码
         cmd.extend([
-            "-c:v", encoder,
-            "-pix_fmt", "yuv420p",
-            "-profile:v", "high",
-            "-level", "4.1",
-            "-b:v", f"{self.settings.get('bitrate', 5000)}k",
-            "-maxrate", f"{int(self.settings.get('bitrate', 5000) * 1.5)}k",
-            "-bufsize", f"{self.settings.get('bitrate', 5000) * 2}k",
-            "-preset", "medium",
+            "-c:v", "copy",
             "-movflags", "+faststart",
             output_path
         ])
@@ -3390,7 +3403,73 @@ class VideoProcessor:
             return True
         except subprocess.CalledProcessError as e:
             logger.error(f"视频处理失败: {e.stderr}")
-            return False
+            
+            # 如果直接复制失败（可能是格式不兼容），尝试使用转码模式
+            logger.info("直接复制视频流失败，尝试使用转码模式")
+            
+            # 重新构建命令，这次使用编码器
+            transcode_cmd = [
+                ffmpeg_cmd,
+                "-y",
+                "-i", video_file
+            ]
+            
+            # 如果有音频文件
+            if audio_file and os.path.exists(audio_file):
+                transcode_cmd.extend(["-i", audio_file])
+                
+                # 配置音频选项
+                transcode_cmd.extend([
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0"
+                ])
+                
+                # 调整音频音量
+                if voice_volume != 1.0:
+                    transcode_cmd.extend(["-af", f"volume={voice_volume}"])
+            else:
+                # 如果没有音频，保留原视频音轨
+                transcode_cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+            
+            # 如果目标时长存在，则裁剪
+            if target_duration:
+                transcode_cmd.extend(["-t", str(target_duration)])
+            
+            # 选择合适的编码器
+            hardware_accel = self.settings.get("hardware_accel", "none")
+            encoder = self.settings.get("encoder", "libx264")
+            
+            if hardware_accel != "none":
+                if "nvenc" in encoder or "nvidia" in hardware_accel.lower():
+                    encoder = "h264_nvenc"
+                elif "qsv" in encoder or "intel" in hardware_accel.lower():
+                    encoder = "h264_qsv"
+                elif "amf" in encoder or "amd" in hardware_accel.lower():
+                    encoder = "h264_amf"
+            
+            # 添加编码器和质量选项
+            transcode_cmd.extend([
+                "-c:v", encoder,
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high",
+                "-level", "4.1",
+                "-b:v", f"{self.settings.get('bitrate', 5000)}k",
+                "-preset", "fast",  # 使用快速预设，提高处理速度
+                "-movflags", "+faststart",
+                output_path
+            ])
+            
+            # 执行转码命令
+            logger.info(f"执行FFmpeg转码命令: {' '.join(transcode_cmd)}")
+            try:
+                result = subprocess.run(transcode_cmd, check=True, capture_output=True, text=True)
+                logger.info("视频转码成功")
+                return True
+            except subprocess.CalledProcessError as e2:
+                logger.error(f"视频转码也失败: {e2.stderr}")
+                return False
         except Exception as e:
             logger.error(f"处理视频时出错: {str(e)}")
             return False
