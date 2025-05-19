@@ -437,458 +437,468 @@ class VideoProcessor:
         self.stop_requested = True
         logger.info("已请求停止视频处理")
     
-    def _scan_material_folders(self, material_folders: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    def _scan_material_folders(self, material_folders, extract_mode="multi_video"):
         """
-        扫描素材文件夹，获取所有视频和配音文件
+        扫描素材文件夹，获取视频和音频文件
         
         Args:
-            material_folders: 素材文件夹信息列表
+            material_folders: 素材文件夹列表
+            extract_mode: 提取模式，"multi_video"或"single_video"
             
         Returns:
-            Dict[str, Dict[str, Any]]: 素材数据字典
+            dict: 素材数据字典，包含每个文件夹的视频和音频文件信息
         """
-        # 导入解析快捷方式的函数
         from src.utils.file_utils import resolve_shortcut
         
+        logger.info(f"开始扫描素材文件夹，共 {len(material_folders)} 个文件夹")
+        
+        # 初始化素材数据字典
         material_data = {}
         
-        # 计算每个文件夹的扫描进度
-        progress_per_folder = 4.0 / len(material_folders) if material_folders else 0
+        # 计算每个文件夹的进度
+        progress_per_folder = 100.0 / max(len(material_folders), 1)
         
-        # 遍历每个素材文件夹
-        for idx, folder_info in enumerate(material_folders):
-            folder_path = folder_info.get("path", "")
-            folder_name = folder_info.get("name", os.path.basename(folder_path) if folder_path else "未命名")
-            extract_mode = folder_info.get("extract_mode", "single_video")
+        # 扫描每个素材文件夹
+        for i, folder_path in enumerate(material_folders):
+            folder_key = f"folder_{i+1}"
+            material_data[folder_key] = {
+                "folder_path": folder_path,
+                "videos": [],
+                "audios": []
+            }
             
-            if not folder_path or not os.path.exists(folder_path):
+            # 更新进度
+            progress = (i * progress_per_folder)
+            self.report_progress(f"正在扫描素材文件夹 {i+1}/{len(material_folders)}: {os.path.basename(folder_path)}", progress)
+            
+            # 检查文件夹是否存在
+            if not os.path.exists(folder_path):
                 logger.warning(f"素材文件夹不存在: {folder_path}")
                 continue
                 
-            self.report_progress(f"扫描素材文件夹: {folder_name}", 1 + progress_per_folder * idx)
-            
-            # 检查是否是多视频拼接模式
-            if extract_mode == "multi_video":
-                # 多视频拼接模式：直接将素材文件夹作为一个场景
-                logger.info(f"使用多视频拼接模式处理素材: {folder_path}")
-                
-                # 初始化场景数据
-                segment_key = f"01_{folder_name}"
-                material_data[segment_key] = {
-                    "videos": [],
-                    "audios": [],
-                    "path": folder_path,
-                    "segment_index": 0,  # 存储段落索引，用于排序
-                    "parent_folder": folder_name,  # 记录所属父文件夹
-                    "is_shortcut": False,  # 记录是否为快捷方式
-                    "original_path": folder_path,  # 记录原始路径
-                    "display_name": folder_name,  # 用于显示的名称
-                    "extract_mode": "multi_video"  # 标记为多视频拼接模式
-                }
-                
-                # 扫描视频和配音文件夹
-                self._scan_media_folder(folder_path, segment_key, material_data)
-                
-            else:
-                # 单视频模式：检查是否有子文件夹
-                logger.info(f"使用单视频模式处理素材: {folder_path}")
-                
-                # 获取所有子文件夹，包括普通文件夹和快捷方式
-                sub_folders = []
-                
-                try:
-                    # 遍历文件夹中的所有项目
-                    for item in os.listdir(folder_path):
-                        # 确保文件名是正确的字符串格式
-                        if isinstance(item, bytes):
-                            try:
-                                item = item.decode('utf-8')
-                            except UnicodeDecodeError:
-                                try:
-                                    item = item.decode('gbk')
-                                except UnicodeDecodeError:
-                                    logger.error(f"无法解码文件名: {item}")
-                                    continue
-                        
-                        item_path = os.path.join(folder_path, item)
-                        is_shortcut = False
-                        actual_path = item_path
-                        
-                        # 检查是否是快捷方式
-                        if item.lower().endswith('.lnk'):
-                            logger.debug(f"发现可能的快捷方式: {item_path}")
-                            shortcut_target = resolve_shortcut(item_path)
-                            if shortcut_target and os.path.isdir(shortcut_target):
-                                actual_path = shortcut_target
-                                is_shortcut = True
-                                logger.info(f"解析快捷方式成功: {item_path} -> {actual_path}")
-                            else:
-                                logger.warning(f"无法解析快捷方式或目标不是目录: {item_path}")
-                                continue
-                                
-                        # 检查是否是文件夹
-                        if os.path.isdir(actual_path):
-                            # 检查是否有视频或配音子文件夹
-                            has_video = os.path.exists(os.path.join(actual_path, "视频"))
-                            has_audio = os.path.exists(os.path.join(actual_path, "配音"))
-                            
-                            # 检查是否有视频快捷方式
-                            if not has_video:
-                                video_shortcut_paths = [
-                                    os.path.join(actual_path, "视频 - 快捷方式.lnk"),
-                                    os.path.join(actual_path, "视频.lnk"),
-                                    os.path.join(actual_path, "视频快捷方式.lnk")
-                                ]
-                                
-                                for shortcut_path in video_shortcut_paths:
-                                    if os.path.exists(shortcut_path):
-                                        has_video = True
-                                        break
-                                        
-                                # 如果仍未找到，尝试搜索包含"视频"的所有.lnk文件
-                                if not has_video:
-                                    try:
-                                        for sub_item in os.listdir(actual_path):
-                                            # 确保文件名是正确的字符串格式
-                                            if isinstance(sub_item, bytes):
-                                                try:
-                                                    sub_item = sub_item.decode('utf-8')
-                                                except UnicodeDecodeError:
-                                                    try:
-                                                        sub_item = sub_item.decode('gbk')
-                                                    except UnicodeDecodeError:
-                                                        logger.error(f"无法解码文件名: {sub_item}")
-                                                        continue
-                                            
-                                            if sub_item.lower().endswith('.lnk') and "视频" in sub_item:
-                                                has_video = True
-                                                break
-                                    except Exception as e:
-                                        logger.error(f"搜索视频快捷方式时出错: {str(e)}")
-                            
-                            # 检查是否有配音快捷方式
-                            if not has_audio:
-                                audio_shortcut_paths = [
-                                    os.path.join(actual_path, "配音 - 快捷方式.lnk"),
-                                    os.path.join(actual_path, "配音.lnk"),
-                                    os.path.join(actual_path, "配音快捷方式.lnk")
-                                ]
-                                
-                                for shortcut_path in audio_shortcut_paths:
-                                    if os.path.exists(shortcut_path):
-                                        has_audio = True
-                                        break
-                                        
-                                # 如果仍未找到，尝试搜索包含"配音"的所有.lnk文件
-                                if not has_audio:
-                                    try:
-                                        for sub_item in os.listdir(actual_path):
-                                            # 确保文件名是正确的字符串格式
-                                            if isinstance(sub_item, bytes):
-                                                try:
-                                                    sub_item = sub_item.decode('utf-8')
-                                                except UnicodeDecodeError:
-                                                    try:
-                                                        sub_item = sub_item.decode('gbk')
-                                                    except UnicodeDecodeError:
-                                                        logger.error(f"无法解码文件名: {sub_item}")
-                                                        continue
-                                            
-                                            if sub_item.lower().endswith('.lnk') and "配音" in sub_item:
-                                                has_audio = True
-                                                break
-                                    except Exception as e:
-                                        logger.error(f"搜索配音快捷方式时出错: {str(e)}")
-                            
-                            # 如果有视频或配音子文件夹，则添加到子文件夹列表
-                            if has_video or has_audio:
-                                sub_folders.append({
-                                    "name": item,
-                                    "path": actual_path,
-                                    "is_shortcut": is_shortcut,
-                                    "original_path": item_path
-                                })
-                except Exception as e:
-                    logger.error(f"扫描子文件夹时出错: {str(e)}")
-                    continue
-                
-                # 如果没有找到子文件夹，则直接使用当前文件夹
-                if not sub_folders:
-                    logger.info(f"未找到有效的子文件夹，直接使用当前文件夹: {folder_path}")
-                    
-                    # 初始化场景数据
-                    segment_key = f"01_{folder_name}"
-                    material_data[segment_key] = {
-                        "videos": [],
-                        "audios": [],
-                        "path": folder_path,
-                        "segment_index": 0,
-                        "parent_folder": folder_name,
-                        "is_shortcut": False,
-                        "original_path": folder_path,
-                        "display_name": folder_name
-                    }
-                    
-                    # 扫描视频和配音文件夹
-                    self._scan_media_folder(folder_path, segment_key, material_data)
-                else:
-                    # 按名称排序子文件夹
-                    sub_folders.sort(key=lambda x: x["name"])
-                    
-                    # 处理每个子文件夹
-                    for sub_idx, sub_folder_info in enumerate(sub_folders):
-                        sub_path = sub_folder_info["path"]
-                        sub_name = sub_folder_info["name"]
-                        
-                        if sub_folder_info["is_shortcut"]:
-                            # 移除.lnk后缀，以便更好的显示
-                            if sub_name.lower().endswith('.lnk'):
-                                sub_name = sub_name[:-4]
-                            sub_display_name = f"{sub_name} (快捷方式)"
-                        else:
-                            sub_display_name = sub_name
-                        
-                        self.report_progress(
-                            f"扫描段落 {sub_idx+1}/{len(sub_folders)}: {sub_display_name}", 
-                            1 + progress_per_folder * idx + (progress_per_folder * sub_idx / len(sub_folders))
-                        )
-                        
-                        # 使用顺序编号作为键，确保段落按顺序排列
-                        segment_key = f"{sub_idx+1:02d}_{sub_name}"
-                        
-                        # 初始化段落数据
-                        material_data[segment_key] = {
-                            "videos": [],
-                            "audios": [],
-                            "path": sub_path,
-                            "segment_index": sub_idx,  # 存储段落索引，用于排序
-                            "parent_folder": folder_name,  # 记录所属父文件夹
-                            "is_shortcut": sub_folder_info["is_shortcut"],  # 记录是否为快捷方式
-                            "original_path": sub_folder_info["original_path"],  # 记录原始快捷方式路径
-                            "display_name": sub_display_name  # 用于显示的名称
-                        }
-                        
-                        try:
-                            # 扫描视频文件夹
-                            self._scan_media_folder(sub_path, segment_key, material_data)
-                        except Exception as e:
-                            logger.error(f"扫描段落 {sub_display_name} 时出错: {str(e)}")
-        
-        return material_data
-    
-    def _scan_media_folder(self, folder_path: str, folder_key: str, material_data: Dict[str, Dict[str, Any]]):
-        """
-        扫描指定文件夹的媒体文件
-        
-        Args:
-            folder_path: 文件夹路径
-            folder_key: 素材数据字典中的键
-            material_data: 素材数据字典
-        """
-        # 导入解析快捷方式的函数和COM组件初始化函数
-        from src.utils.file_utils import resolve_shortcut
-        
-        # 查找视频文件夹，包括处理快捷方式
-        video_folder = os.path.join(folder_path, "视频")
-        video_folder_paths = []
-        
-        # 检查视频文件夹是否存在并是目录
-        if os.path.exists(video_folder) and os.path.isdir(video_folder):
-            logger.info(f"在路径 {folder_path} 中直接找到视频文件夹: {video_folder}")
-            video_folder_paths = [video_folder]
-        else:
-            logger.debug(f"常规视频文件夹不存在，尝试寻找快捷方式: {video_folder}")
-            
-            # 检查所有可能的命名格式
-            video_shortcut_candidates = [
-                os.path.join(folder_path, "视频 - 快捷方式.lnk"),
-                os.path.join(folder_path, "视频.lnk"),
-                os.path.join(folder_path, "视频快捷方式.lnk")
-            ]
-            
-            # 检查所有候选快捷方式
-            for shortcut_path in video_shortcut_candidates:
-                if os.path.exists(shortcut_path):
-                    logger.info(f"发现视频文件夹快捷方式: {shortcut_path}")
+            # 如果是快捷方式文件
+            if os.path.isfile(folder_path) and folder_path.lower().endswith('.lnk'):
+                logger.info(f"检测到素材文件夹是快捷方式: {folder_path}")
+                # 尝试解析快捷方式，最多重试5次
+                target_path = None
+                for attempt in range(5):
                     try:
-                        target_path = resolve_shortcut(shortcut_path)
-                        if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                            logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
-                            video_folder_paths = [target_path]
+                        target_path = resolve_shortcut(folder_path)
+                        if target_path and os.path.exists(target_path):
+                            logger.info(f"快捷方式解析成功: {folder_path} -> {target_path}")
+                            folder_path = target_path
+                            material_data[folder_key]["folder_path"] = folder_path
                             break
+                        else:
+                            logger.warning(f"快捷方式解析失败或目标不存在 (尝试 {attempt+1}/5): {folder_path}")
+                            # 短暂等待后重试
+                            import time
+                            time.sleep(0.5)
                     except Exception as e:
-                        logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
+                        logger.warning(f"解析快捷方式出错 (尝试 {attempt+1}/5): {folder_path}, 错误: {str(e)}")
+                        # 短暂等待后重试
+                        import time
+                        time.sleep(0.5)
+                
+                if not target_path or not os.path.exists(target_path):
+                    logger.warning(f"无法解析素材文件夹快捷方式，跳过此文件夹: {folder_path}")
+                    continue
             
-            # 如果未找到特定命名格式的快捷方式，尝试查找包含"视频"的所有.lnk文件
-            if not video_folder_paths:
-                try:
-                    # 遍历所有文件寻找包含"视频"的快捷方式
-                    for item in os.listdir(folder_path):
-                        # 确保文件名是正确的字符串格式
-                        if isinstance(item, bytes):
-                            try:
-                                item = item.decode('utf-8')
-                            except UnicodeDecodeError:
-                                try:
-                                    item = item.decode('gbk')
-                                except UnicodeDecodeError:
-                                    logger.error(f"无法解码文件名: {item}")
-                                    continue
-                        
-                        # 检查是否是包含"视频"的快捷方式
-                        if item.lower().endswith('.lnk') and "视频" in item:
-                            shortcut_path = os.path.join(folder_path, item)
-                            if shortcut_path not in video_shortcut_candidates:
-                                logger.info(f"发现额外的视频快捷方式: {shortcut_path}")
-                                try:
-                                    target_path = resolve_shortcut(shortcut_path)
-                                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                                        logger.info(f"解析额外快捷方式成功: {shortcut_path} -> {target_path}")
-                                        video_folder_paths = [target_path]
-                                        break
-                                except Exception as e:
-                                    logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
-                except Exception as e:
-                    logger.error(f"搜索视频快捷方式时出错: {str(e)}")
-        
-        # 处理视频文件夹 - 优化：使用快速方法获取视频时长
-        video_info_list = []
-        if video_folder_paths:
-            for video_folder in video_folder_paths:
-                if os.path.exists(video_folder) and os.path.isdir(video_folder):
-                    # 获取所有视频文件
-                    video_files = []
-                    for root, _, files in os.walk(video_folder):
-                        for file in files:
-                            if file.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".wmv")):
-                                video_files.append(os.path.join(root, file))
-                    
-                    logger.info(f"在文件夹 '{video_folder}' 中找到 {len(video_files)} 个视频文件")
-                    
-                    # 优化：尝试使用快速方法获取视频时长
+            # 根据提取模式处理文件夹
+            if extract_mode == "multi_video":
+                # 多视频模式：直接处理文件夹作为一个场景
+                logger.info(f"多视频模式: 直接处理文件夹 {folder_path}")
+                
+                # 扫描视频文件，增加最大深度参数
+                video_files = self._scan_media_files(folder_path, "视频", max_depth=5)
+                if video_files:
+                    # 处理视频文件
+                    video_info_list = []
                     for video_file in video_files:
                         try:
-                            # 尝试快速获取视频时长
+                            # 获取视频时长
                             duration = self._get_video_duration_fast(video_file)
                             
                             # 创建视频信息对象
                             video_info = {
                                 "path": video_file,
-                                "duration": duration,  # 使用快速方法获取的时长
-                                "fps": -1,  # 这些信息暂不获取
-                                "width": -1,
-                                "height": -1
-                            }
-                            video_info_list.append(video_info)
-                        except Exception as e:
-                            logger.warning(f"处理视频路径失败: {video_file}, 错误: {str(e)}")
-                            # 创建基本信息对象，不包含时长
-                            video_info = {
-                                "path": video_file,
-                                "duration": -1,  # 使用-1表示未知时长
+                                "duration": duration,
                                 "fps": -1,
                                 "width": -1,
                                 "height": -1
                             }
                             video_info_list.append(video_info)
-        else:
-            logger.warning(f"文件夹 '{folder_key}' 中没有找到视频文件夹或其快捷方式")
-        
-        # 保存视频列表
-        material_data[folder_key]["videos"] = video_info_list
-        logger.info(f"文件夹 '{folder_key}' 中找到 {len(video_info_list)} 个视频文件")
-        
-        # 查找配音文件夹，包括处理快捷方式
-        audio_folder = os.path.join(folder_path, "配音")
-        audio_folder_paths = []
-        
-        # 检查配音文件夹是否存在并是目录
-        if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
-            logger.info(f"在路径 {folder_path} 中直接找到配音文件夹: {audio_folder}")
-            audio_folder_paths = [audio_folder]
-        else:
-            logger.debug(f"常规配音文件夹不存在，尝试寻找快捷方式: {audio_folder}")
-            
-            # 检查所有可能的命名格式
-            audio_shortcut_candidates = [
-                os.path.join(folder_path, "配音 - 快捷方式.lnk"),
-                os.path.join(folder_path, "配音.lnk"),
-                os.path.join(folder_path, "配音快捷方式.lnk")
-            ]
-            
-            # 检查所有候选快捷方式
-            for shortcut_path in audio_shortcut_candidates:
-                if os.path.exists(shortcut_path):
-                    logger.info(f"发现配音文件夹快捷方式: {shortcut_path}")
-                    try:
-                        target_path = resolve_shortcut(shortcut_path)
-                        if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                            logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
-                            audio_folder_paths = [target_path]
-                            break
-                    except Exception as e:
-                        logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
-            
-            # 如果未找到特定命名格式的快捷方式，尝试查找包含"配音"的所有.lnk文件
-            if not audio_folder_paths:
-                try:
-                    # 遍历所有文件寻找包含"配音"的快捷方式
-                    for item in os.listdir(folder_path):
-                        # 确保文件名是正确的字符串格式
-                        if isinstance(item, bytes):
-                            try:
-                                item = item.decode('utf-8')
-                            except UnicodeDecodeError:
-                                try:
-                                    item = item.decode('gbk')
-                                except UnicodeDecodeError:
-                                    logger.error(f"无法解码文件名: {item}")
-                                    continue
-                        
-                        # 检查是否是包含"配音"的快捷方式
-                        if item.lower().endswith('.lnk') and "配音" in item:
-                            shortcut_path = os.path.join(folder_path, item)
-                            if shortcut_path not in audio_shortcut_candidates:
-                                logger.info(f"发现额外的配音快捷方式: {shortcut_path}")
-                                try:
-                                    target_path = resolve_shortcut(shortcut_path)
-                                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                                        logger.info(f"解析额外快捷方式成功: {shortcut_path} -> {target_path}")
-                                        audio_folder_paths = [target_path]
-                                        break
-                                except Exception as e:
-                                    logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
-                except Exception as e:
-                    logger.error(f"搜索配音快捷方式时出错: {str(e)}")
-        
-        # 处理配音文件夹 - 配音文件需要获取时长，因为它们决定了视频选择
-        audio_info_list = []
-        if audio_folder_paths:
-            for audio_folder in audio_folder_paths:
-                if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
-                    # 获取所有音频文件
-                    audio_files = []
-                    for root, _, files in os.walk(audio_folder):
-                        for file in files:
-                            if file.lower().endswith((".mp3", ".wav", ".aac", ".ogg", ".flac", ".m4a")):
-                                audio_files.append(os.path.join(root, file))
+                        except Exception as e:
+                            logger.warning(f"处理视频文件失败: {video_file}, 错误: {str(e)}")
                     
-                    logger.info(f"在文件夹 '{audio_folder}' 中找到 {len(audio_files)} 个音频文件")
-                    
-                    # 配音文件需要获取时长，因为它们决定了视频选择
+                    material_data[folder_key]["videos"] = video_info_list
+                    logger.info(f"在文件夹 {folder_path} 中找到 {len(video_info_list)} 个视频文件")
+            else:
+                    logger.warning(f"在文件夹 {folder_path} 中未找到视频文件")
+                
+                # 扫描音频文件，增加最大深度参数
+                audio_files = self._scan_media_files(folder_path, "配音", max_depth=5)
+                if audio_files:
+                    # 处理音频文件
+                    audio_info_list = []
                     for audio_file in audio_files:
                         try:
+                            # 获取音频元数据
                             audio_info = self._get_audio_metadata(audio_file)
                             if audio_info and audio_info.get("duration", 0) > 0:
                                 audio_info_list.append(audio_info)
                         except Exception as e:
-                            logger.warning(f"分析音频失败: {audio_file}, 错误: {str(e)}")
-        else:
-            logger.warning(f"文件夹 '{folder_key}' 中没有找到配音文件夹或其快捷方式")
+                            logger.warning(f"处理音频文件失败: {audio_file}, 错误: {str(e)}")
+                    
+                    material_data[folder_key]["audios"] = audio_info_list
+                    logger.info(f"在文件夹 {folder_path} 中找到 {len(audio_info_list)} 个音频文件")
+                            else:
+                    logger.warning(f"在文件夹 {folder_path} 中未找到音频文件")
+            
+            elif extract_mode == "single_video":
+                # 单视频模式：查找视频和配音子文件夹
+                logger.info(f"单视频模式: 查找视频和配音子文件夹 {folder_path}")
+                
+                # 查找视频文件夹，增加最大深度参数
+                video_folders = self._process_folder_shortcuts(folder_path, "视频", max_depth=5)
+                if not video_folders:
+                    logger.warning(f"在 {folder_path} 中未找到视频文件夹")
+                    # 尝试直接在当前文件夹中查找视频文件
+                    video_files = self._scan_media_files(folder_path, "视频", max_depth=5)
+                    if video_files:
+                        logger.info(f"在文件夹根目录中直接找到 {len(video_files)} 个视频文件")
+                        # 处理视频文件
+                        video_info_list = []
+                        for video_file in video_files:
+                            try:
+                                # 获取视频时长
+                                duration = self._get_video_duration_fast(video_file)
+                                
+                                # 创建视频信息对象
+                                video_info = {
+                                    "path": video_file,
+                                    "duration": duration,
+                                    "fps": -1,
+                                    "width": -1,
+                                    "height": -1
+                                }
+                                video_info_list.append(video_info)
+                            except Exception as e:
+                                logger.warning(f"处理视频文件失败: {video_file}, 错误: {str(e)}")
+                        
+                        material_data[folder_key]["videos"] = video_info_list
+                    else:
+                        logger.warning(f"在文件夹根目录中未找到视频文件")
+                else:
+                    # 处理找到的视频文件夹
+                    video_info_list = []
+                    for video_folder in video_folders:
+                        video_files = self._scan_media_files(video_folder, "视频", max_depth=5)
+                        if video_files:
+                            logger.info(f"在视频文件夹 {video_folder} 中找到 {len(video_files)} 个视频文件")
+                            # 处理视频文件
+                            for video_file in video_files:
+                                try:
+                                    # 获取视频时长
+                                    duration = self._get_video_duration_fast(video_file)
+                                    
+                                    # 创建视频信息对象
+                                    video_info = {
+                                        "path": video_file,
+                                        "duration": duration,
+                                        "fps": -1,
+                                        "width": -1,
+                                        "height": -1
+                                    }
+                                    video_info_list.append(video_info)
+                                    except Exception as e:
+                                    logger.warning(f"处理视频文件失败: {video_file}, 错误: {str(e)}")
+                    
+                    material_data[folder_key]["videos"] = video_info_list
+                    logger.info(f"在文件夹 {folder_path} 中找到 {len(video_info_list)} 个视频文件")
+                
+                # 查找配音文件夹，增加最大深度参数
+                audio_folders = self._process_folder_shortcuts(folder_path, "配音", max_depth=5)
+                if not audio_folders:
+                    logger.warning(f"在 {folder_path} 中未找到配音文件夹")
+                    # 尝试直接在当前文件夹中查找音频文件
+                    audio_files = self._scan_media_files(folder_path, "配音", max_depth=5)
+                    if audio_files:
+                        logger.info(f"在文件夹根目录中直接找到 {len(audio_files)} 个音频文件")
+                        # 处理音频文件
+                        audio_info_list = []
+                        for audio_file in audio_files:
+                            try:
+                                # 获取音频元数据
+                                audio_info = self._get_audio_metadata(audio_file)
+                                if audio_info and audio_info.get("duration", 0) > 0:
+                                    audio_info_list.append(audio_info)
+                                    except Exception as e:
+                                logger.warning(f"处理音频文件失败: {audio_file}, 错误: {str(e)}")
+                        
+                        material_data[folder_key]["audios"] = audio_info_list
+                    else:
+                        logger.warning(f"在文件夹根目录中未找到音频文件")
+                else:
+                    # 处理找到的配音文件夹
+                    audio_info_list = []
+                    for audio_folder in audio_folders:
+                        audio_files = self._scan_media_files(audio_folder, "配音", max_depth=5)
+                        if audio_files:
+                            logger.info(f"在配音文件夹 {audio_folder} 中找到 {len(audio_files)} 个音频文件")
+                            # 处理音频文件
+                            for audio_file in audio_files:
+                                try:
+                                    # 获取音频元数据
+                                    audio_info = self._get_audio_metadata(audio_file)
+                                    if audio_info and audio_info.get("duration", 0) > 0:
+                                        audio_info_list.append(audio_info)
+                except Exception as e:
+                                    logger.warning(f"处理音频文件失败: {audio_file}, 错误: {str(e)}")
+                    
+                    material_data[folder_key]["audios"] = audio_info_list
+                    logger.info(f"在文件夹 {folder_path} 中找到 {len(audio_info_list)} 个音频文件")
+            
+            # 检查是否有场景没有视频文件
+            if not material_data[folder_key]["videos"]:
+                logger.warning(f"警告: 场景 {folder_key} 没有有效的视频文件")
+            
+            # 添加更多进度更新点
+            current_progress = (i + 1) / len(material_folders) * 100.0
+            self.report_progress(f"已扫描 {i+1}/{len(material_folders)} 个文件夹", current_progress)
         
-        # 保存音频列表
-        material_data[folder_key]["audios"] = audio_info_list
-        logger.info(f"文件夹 '{folder_key}' 中找到 {len(audio_info_list)} 个有效配音")
+        # 更新进度
+        self.report_progress(f"素材扫描完成，共处理 {len(material_folders)} 个文件夹", 100.0)
+        
+        # 检查是否有有效素材
+        valid_folders = 0
+        for folder_key, data in material_data.items():
+            if data["videos"]:
+                valid_folders += 1
+        
+        logger.info(f"素材扫描完成，找到 {valid_folders} 个有效场景（含视频文件）")
+        
+        if valid_folders == 0:
+            logger.error("没有找到任何有效素材（含视频文件）")
+            return None
+        
+        return material_data
+    
+    def _scan_media_folder(self, folder_path, folder_type="视频"):
+        """
+        扫描媒体文件夹，获取所有媒体文件
+        
+        Args:
+            folder_path: 文件夹路径
+            folder_type: 文件夹类型，"视频"或"配音"
+            
+        Returns:
+            list: 媒体文件列表
+        """
+        logger.debug(f"开始扫描{folder_type}文件夹: {folder_path}")
+        
+        # 检查文件夹是否存在
+        if not os.path.exists(folder_path):
+            logger.warning(f"{folder_type}文件夹不存在: {folder_path}")
+            return []
+        
+        # 使用增强的媒体文件扫描方法
+        media_files = self._scan_media_files(folder_path, folder_type)
+        
+        # 如果没有找到媒体文件，尝试处理可能的快捷方式
+        if not media_files:
+            logger.debug(f"在 {folder_path} 中未直接找到{folder_type}文件，尝试查找快捷方式")
+            
+            # 检查文件夹本身是否是快捷方式
+            if folder_path.lower().endswith('.lnk'):
+                from src.utils.file_utils import resolve_shortcut
+                try:
+                    target = resolve_shortcut(folder_path)
+                    if target and os.path.exists(target):
+                        logger.debug(f"文件夹是快捷方式，指向: {target}")
+                        return self._scan_media_folder(target, folder_type)
+                except Exception as e:
+                    logger.warning(f"解析快捷方式失败: {folder_path}, 错误: {str(e)}")
+            
+            # 尝试在父目录中查找同名的视频/配音文件夹
+            parent_dir = os.path.dirname(folder_path)
+            folder_name = os.path.basename(folder_path)
+            
+            # 构建可能的文件夹名称
+            possible_folders = [
+                os.path.join(parent_dir, folder_type),
+                os.path.join(parent_dir, folder_type + "文件"),
+                os.path.join(parent_dir, folder_type + "文件夹"),
+            ]
+            
+            # 如果是视频文件夹，添加英文名称
+            if folder_type == "视频":
+                possible_folders.append(os.path.join(parent_dir, "video"))
+                possible_folders.append(os.path.join(parent_dir, "videos"))
+            # 如果是配音文件夹，添加英文名称
+            elif folder_type == "配音":
+                possible_folders.append(os.path.join(parent_dir, "audio"))
+                possible_folders.append(os.path.join(parent_dir, "audios"))
+            
+            # 检查可能的文件夹
+            for possible_folder in possible_folders:
+                if os.path.exists(possible_folder) and os.path.isdir(possible_folder):
+                    logger.debug(f"尝试在父目录中查找{folder_type}文件夹: {possible_folder}")
+                    media_files = self._scan_media_files(possible_folder, folder_type)
+                    if media_files:
+                        logger.debug(f"在 {possible_folder} 中找到 {len(media_files)} 个{folder_type}文件")
+                        break
+        
+        # 记录找到的媒体文件数量
+        if media_files:
+            logger.debug(f"在 {folder_path} 中找到 {len(media_files)} 个{folder_type}文件")
+        else:
+            logger.warning(f"在 {folder_path} 中未找到任何{folder_type}文件")
+        
+        return media_files
+    
+    def _scan_media_files(self, folder_path, folder_type="视频", max_depth=3, _current_depth=0):
+        """
+        扫描文件夹中的媒体文件，支持多层快捷方式
+        
+        Args:
+            folder_path: 要扫描的文件夹路径
+            folder_type: 文件夹类型，"视频"或"配音"
+            max_depth: 最大搜索深度
+            _current_depth: 当前搜索深度
+            
+        Returns:
+            list: 媒体文件列表
+        """
+        from src.utils.file_utils import list_media_files, resolve_shortcut
+        
+        # 添加缩进以便于日志阅读
+        indent = "  " * _current_depth
+        
+        # 检查搜索深度
+        if _current_depth > max_depth:
+            logger.debug(f"{indent}达到最大搜索深度 {max_depth}，停止搜索: {folder_path}")
+            return []
+        
+        # 检查路径是否存在
+        if not os.path.exists(folder_path):
+            logger.debug(f"{indent}路径不存在: {folder_path}")
+            return []
+        
+        media_files = []
+        
+        # 如果是快捷方式文件
+        if os.path.isfile(folder_path) and folder_path.lower().endswith('.lnk'):
+            logger.debug(f"{indent}检测到快捷方式文件: {folder_path}")
+            
+            # 尝试解析快捷方式，最多重试3次
+            for attempt in range(3):
+                try:
+                    # 尝试解析快捷方式
+                    target = resolve_shortcut(folder_path)
+                    if target and os.path.exists(target):
+                        logger.debug(f"{indent}快捷方式解析成功: {folder_path} -> {target}")
+                        # 递归扫描目标路径
+                        return self._scan_media_files(target, folder_type, max_depth, _current_depth + 1)
+                    else:
+                        logger.warning(f"{indent}快捷方式解析失败或目标不存在 (尝试 {attempt+1}/3): {folder_path}")
+                        # 短暂等待后重试
+                        import time
+                        time.sleep(0.5)
+                    except Exception as e:
+                    logger.warning(f"{indent}解析快捷方式出错 (尝试 {attempt+1}/3): {folder_path}, 错误: {str(e)}")
+                    # 短暂等待后重试
+                    import time
+                    time.sleep(0.5)
+            
+            logger.warning(f"{indent}无法解析快捷方式，跳过: {folder_path}")
+            return []
+        
+        # 如果是目录
+        if os.path.isdir(folder_path):
+            logger.debug(f"{indent}扫描目录: {folder_path}")
+            
+            # 直接扫描媒体文件
+            try:
+                media_dict = list_media_files(folder_path, recursive=False)
+                
+                # 根据文件夹类型获取对应的媒体文件
+                if folder_type == "视频":
+                    found_files = media_dict.get('videos', [])
+                    if found_files:
+                        logger.debug(f"{indent}在 {folder_path} 中找到 {len(found_files)} 个视频文件")
+                        media_files.extend(found_files)
+                elif folder_type == "配音":
+                    found_files = media_dict.get('audios', [])
+                    if found_files:
+                        logger.debug(f"{indent}在 {folder_path} 中找到 {len(found_files)} 个音频文件")
+                        media_files.extend(found_files)
+            except Exception as e:
+                logger.warning(f"{indent}扫描目录媒体文件失败: {folder_path}, 错误: {str(e)}")
+            
+            # 检查目录中的快捷方式和子目录
+            try:
+                items = os.listdir(folder_path)
+                # 首先处理快捷方式
+                for item in items:
+                    if item.lower().endswith('.lnk'):
+                        item_path = os.path.join(folder_path, item)
+                        logger.debug(f"{indent}检查快捷方式: {item_path}")
+                        
+                        # 尝试解析快捷方式，最多重试2次
+                        for attempt in range(2):
+                            try:
+                                target = resolve_shortcut(item_path)
+                                if target and os.path.exists(target):
+                                    logger.debug(f"{indent}快捷方式指向: {target}")
+                                    # 递归扫描目标
+                                    shortcut_files = self._scan_media_files(target, folder_type, max_depth, _current_depth + 1)
+                                    if shortcut_files:
+                                        media_files.extend(shortcut_files)
+                                        logger.debug(f"{indent}从快捷方式 {item} 找到 {len(shortcut_files)} 个{folder_type}文件")
+                        break
+                                else:
+                                    logger.debug(f"{indent}快捷方式解析失败或目标不存在 (尝试 {attempt+1}/2): {item_path}")
+                                    # 短暂等待后重试
+                                    import time
+                                    time.sleep(0.3)
+                            except Exception as e:
+                                logger.debug(f"{indent}解析快捷方式失败 (尝试 {attempt+1}/2): {item_path}, 错误: {str(e)}")
+                                # 短暂等待后重试
+                                import time
+                                time.sleep(0.3)
+                
+                # 然后处理子目录
+                for item in items:
+                    item_path = os.path.join(folder_path, item)
+                    if os.path.isdir(item_path):
+                        # 确定是否应该搜索此子目录
+                        should_search = False
+                        
+                        # 如果子目录名称包含特定关键词，则搜索
+                        if (folder_type == "视频" and any(keyword in item.lower() for keyword in ["video", "视频", "影片", "影像", "movie", "film"])) or \
+                           (folder_type == "配音" and any(keyword in item.lower() for keyword in ["audio", "配音", "声音", "音频", "voice", "sound"])):
+                            should_search = True
+                            logger.debug(f"{indent}子目录名称包含关键词，将搜索: {item}")
+                        
+                        # 如果当前深度较低，也可以搜索
+                        if _current_depth < 2:
+                            should_search = True
+                        
+                        if should_search:
+                            logger.debug(f"{indent}搜索子目录: {item}")
+                            sub_files = self._scan_media_files(item_path, folder_type, max_depth, _current_depth + 1)
+                            if sub_files:
+                                media_files.extend(sub_files)
+                                logger.debug(f"{indent}从子目录 {item} 找到 {len(sub_files)} 个{folder_type}文件")
+                    except Exception as e:
+                logger.warning(f"{indent}扫描目录内容出错: {folder_path}, 错误: {str(e)}")
+        
+        # 记录找到的媒体文件数量
+        if media_files:
+            logger.debug(f"{indent}在 {folder_path} 中总共找到 {len(media_files)} 个{folder_type}文件")
+        
+        return media_files
     
     def _get_video_metadata(self, video_path: str, lazy_load: bool = False) -> Dict[str, Any]:
         """
@@ -2730,117 +2740,212 @@ class VideoProcessor:
             logger.warning(f"ffprobe检查视频失败: {e}")
             return False
 
-    def _process_folder_shortcuts(self, folder_path):
+    def _process_folder_shortcuts(self, folder_path, folder_name="视频", max_depth=3, _current_depth=0):
         """
-        处理文件夹中的快捷方式
+        处理文件夹快捷方式，查找指定名称的文件夹
         
         Args:
-            folder_path: 文件夹路径
+            folder_path: 要处理的文件夹路径
+            folder_name: 要查找的文件夹名称，默认为"视频"
+            max_depth: 最大搜索深度
+            _current_depth: 当前搜索深度，用于递归调用
             
         Returns:
-            Dict: 包含处理后的文件夹路径信息
+            list: 找到的文件夹路径列表
         """
-        # 导入解析快捷方式的函数
         from src.utils.file_utils import resolve_shortcut
+        import time
         
-        result = {
-            "video_folder": os.path.join(folder_path, "视频"),
-            "audio_folder": os.path.join(folder_path, "配音"),
-            "video_folder_paths": [],
-            "audio_folder_paths": []
-        }
+        # 添加缩进以便于日志阅读
+        indent = "  " * _current_depth
+        logger.debug(f"{indent}在 {folder_path} 中查找 '{folder_name}' 文件夹 (深度: {_current_depth})")
         
-        # 检查视频文件夹是否存在，如果不存在则尝试查找快捷方式
-        if not os.path.exists(result["video_folder"]) or not os.path.isdir(result["video_folder"]):
-            logger.debug(f"常规视频文件夹不存在，尝试寻找快捷方式: {result['video_folder']}")
-            
-            # 检查所有可能的命名格式
-            video_shortcut_candidates = [
-                os.path.join(folder_path, "视频 - 快捷方式.lnk"),
-                os.path.join(folder_path, "视频.lnk"),
-                os.path.join(folder_path, "视频快捷方式.lnk")
-            ]
-            
-            # 添加更多可能的快捷方式路径
-            if os.path.exists(folder_path) and os.path.isdir(folder_path):
-                try:
-                    for item in os.listdir(folder_path):
-                        # 确保文件名是正确的字符串格式
-                        if isinstance(item, bytes):
-                            try:
-                                item = item.decode('utf-8')
-                            except UnicodeDecodeError:
-                                try:
-                                    item = item.decode('gbk')
-                                except UnicodeDecodeError:
-                                    logger.error(f"无法解码文件名: {item}")
-                                    continue
-                        
-                        if item.lower().endswith('.lnk') and "视频" in item:
-                            shortcut_path = os.path.join(folder_path, item)
-                            if shortcut_path not in video_shortcut_candidates:
-                                video_shortcut_candidates.append(shortcut_path)
+        # 检查搜索深度
+        if _current_depth > max_depth:
+            logger.debug(f"{indent}达到最大搜索深度 {max_depth}，停止搜索: {folder_path}")
+            return []
+        
+        # 检查路径是否存在
+        if not os.path.exists(folder_path):
+            logger.debug(f"{indent}路径不存在: {folder_path}")
+            return []
+        
+        # 如果是文件，检查是否是快捷方式
+        if os.path.isfile(folder_path):
+            if folder_path.lower().endswith('.lnk'):
+                logger.debug(f"{indent}检测到快捷方式文件: {folder_path}")
+                # 尝试解析快捷方式，最多重试3次
+                for attempt in range(3):
+                    try:
+                        target = resolve_shortcut(folder_path)
+                        if target and os.path.exists(target):
+                            logger.debug(f"{indent}快捷方式解析成功: {folder_path} -> {target}")
+                            # 递归处理目标路径
+                            return self._process_folder_shortcuts(target, folder_name, max_depth, _current_depth + 1)
+                        else:
+                            logger.warning(f"{indent}快捷方式解析失败或目标不存在 (尝试 {attempt+1}/3): {folder_path}")
+                            # 短暂等待后重试
+                            time.sleep(0.5)
                 except Exception as e:
-                    logger.error(f"搜索视频快捷方式时出错: {str(e)}")
+                        logger.warning(f"{indent}解析快捷方式出错 (尝试 {attempt+1}/3): {folder_path}, 错误: {str(e)}")
+                        if attempt < 2:  # 如果不是最后一次尝试，则等待后重试
+                            time.sleep(0.5)
+        else:
+                            break
+                logger.warning(f"{indent}无法解析快捷方式，跳过: {folder_path}")
+            return []
+        
+        # 如果不是目录，返回空列表
+        if not os.path.isdir(folder_path):
+            return []
+        
+        result_paths = []
+        
+        # 首先检查当前目录是否直接匹配
+        if os.path.basename(folder_path).lower() == folder_name.lower() or \
+           folder_name.lower() in os.path.basename(folder_path).lower():
+            logger.debug(f"{indent}找到匹配的文件夹名称: {folder_path}")
+            result_paths.append(folder_path)
+            return result_paths
+        
+        # 检查当前目录下是否有目标文件夹
+        # 扩展匹配模式，支持更多命名格式
+        possible_names = [
+            folder_name,
+            folder_name + "文件",
+            folder_name + "文件夹",
+            folder_name + "素材",
+            folder_name + "_files",
+            folder_name + "_folder"
+        ]
+        
+        # 如果是视频文件夹，添加英文名称
+        if folder_name == "视频":
+            possible_names.extend(["video", "videos", "movie", "movies", "film", "films", "footage"])
+        # 如果是配音文件夹，添加英文名称
+        elif folder_name == "配音":
+            possible_names.extend(["audio", "audios", "voice", "voices", "sound", "sounds", "narration"])
+        
+        # 检查是否有直接匹配的文件夹
+        for name in possible_names:
+            target_folder = os.path.join(folder_path, name)
+            if os.path.exists(target_folder) and os.path.isdir(target_folder):
+                logger.debug(f"{indent}在 {folder_path} 中找到匹配的文件夹: {name}")
+                result_paths.append(target_folder)
+                return result_paths
+        
+        # 检查快捷方式
+        try:
+            # 构建可能的快捷方式名称
+            shortcut_patterns = []
+            for name in possible_names:
+                shortcut_patterns.extend([
+                    f"{name}.lnk",
+                    f"{name} - 快捷方式.lnk",
+                    f"{name}快捷方式.lnk",
+                    f"{name}的快捷方式.lnk",
+                    f"{name} - 副本.lnk",
+                    f"{name} - 链接.lnk",
+                    f"{name} - shortcut.lnk"
+                ])
             
-            # 检查所有候选快捷方式
-            for shortcut_path in video_shortcut_candidates:
+            # 检查所有可能的快捷方式名称
+            for pattern in shortcut_patterns:
+                shortcut_path = os.path.join(folder_path, pattern)
                 if os.path.exists(shortcut_path):
-                    logger.info(f"发现视频文件夹快捷方式: {shortcut_path}")
-                    target_path = resolve_shortcut(shortcut_path)
-                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
-                        result["video_folder_paths"] = [target_path]
+                    logger.debug(f"{indent}找到快捷方式: {shortcut_path}")
+                    
+                    # 尝试解析快捷方式，最多重试3次
+                    for attempt in range(3):
+                        try:
+                            target = resolve_shortcut(shortcut_path)
+                            if target and os.path.exists(target):
+                                logger.debug(f"{indent}快捷方式解析成功: {shortcut_path} -> {target}")
+                                
+                                # 如果目标是目录
+                                if os.path.isdir(target):
+                                    # 检查目标目录名称是否匹配
+                                    if os.path.basename(target).lower() == folder_name.lower() or \
+                                       folder_name.lower() in os.path.basename(target).lower():
+                                        logger.debug(f"{indent}快捷方式指向匹配的文件夹: {target}")
+                                        result_paths.append(target)
+                                    else:
+                                        # 递归处理目标目录
+                                        sub_paths = self._process_folder_shortcuts(target, folder_name, max_depth, _current_depth + 1)
+                                        if sub_paths:
+                                            result_paths.extend(sub_paths)
+                                    break
+                                else:
+                                    logger.warning(f"{indent}快捷方式解析失败或目标不存在: {shortcut_path} -> {target}")
+                                    break
+                            else:
+                                logger.warning(f"{indent}快捷方式解析失败或目标不存在 (尝试 {attempt+1}/3): {shortcut_path}")
+                                # 短暂等待后重试
+                                time.sleep(0.5)
+                except Exception as e:
+                            logger.warning(f"{indent}解析快捷方式出错 (尝试 {attempt+1}/3): {shortcut_path}, 错误: {str(e)}")
+                            if attempt < 2:  # 如果不是最后一次尝试，则等待后重试
+                                time.sleep(0.5)
+                            else:
+                                break
+            
+            # 如果还没找到，检查所有.lnk文件
+            if not result_paths:
+                for item in os.listdir(folder_path):
+                    if item.lower().endswith('.lnk'):
+                        shortcut_path = os.path.join(folder_path, item)
+                        logger.debug(f"{indent}检查其他快捷方式: {shortcut_path}")
+                        
+                        # 尝试解析快捷方式，最多重试2次
+                        for attempt in range(2):
+                            try:
+                                target = resolve_shortcut(shortcut_path)
+                                if target and os.path.exists(target):
+                                    logger.debug(f"{indent}快捷方式解析成功: {shortcut_path} -> {target}")
+                                    
+                                    # 如果目标是目录
+                                    if os.path.isdir(target):
+                                        # 检查目标目录名称是否匹配
+                                        if os.path.basename(target).lower() == folder_name.lower() or \
+                                           folder_name.lower() in os.path.basename(target).lower():
+                                            logger.debug(f"{indent}快捷方式指向匹配的文件夹: {target}")
+                                            result_paths.append(target)
+                                        else:
+                                            # 递归处理目标目录
+                                            sub_paths = self._process_folder_shortcuts(target, folder_name, max_depth, _current_depth + 1)
+                                            if sub_paths:
+                                                result_paths.extend(sub_paths)
+                                                break
                         break
         else:
-            result["video_folder_paths"] = [result["video_folder"]]
+                                    logger.debug(f"{indent}快捷方式解析失败或目标不存在 (尝试 {attempt+1}/2): {shortcut_path}")
+                                    # 短暂等待后重试
+                                    time.sleep(0.3)
+                            except Exception as e:
+                                logger.debug(f"{indent}解析快捷方式失败 (尝试 {attempt+1}/2): {shortcut_path}, 错误: {str(e)}")
+                                # 短暂等待后重试
+                                time.sleep(0.3)
+            
+            # 如果仍然没有找到，并且深度允许，检查子目录
+            if not result_paths and _current_depth < max_depth:
+                for item in os.listdir(folder_path):
+                    item_path = os.path.join(folder_path, item)
+                    if os.path.isdir(item_path):
+                        # 递归处理子目录
+                        sub_paths = self._process_folder_shortcuts(item_path, folder_name, max_depth, _current_depth + 1)
+                        if sub_paths:
+                            result_paths.extend(sub_paths)
+                            break  # 找到一个匹配项后停止搜索
+        except Exception as e:
+            logger.warning(f"{indent}处理文件夹快捷方式时出错: {folder_path}, 错误: {str(e)}")
         
-        # 检查配音文件夹是否存在，如果不存在则尝试查找快捷方式
-        if not os.path.exists(result["audio_folder"]) or not os.path.isdir(result["audio_folder"]):
-            logger.debug(f"常规配音文件夹不存在，尝试寻找快捷方式: {result['audio_folder']}")
-            
-            # 检查所有可能的命名格式
-            audio_shortcut_candidates = [
-                os.path.join(folder_path, "配音 - 快捷方式.lnk"),
-                os.path.join(folder_path, "配音.lnk"),
-                os.path.join(folder_path, "配音快捷方式.lnk")
-            ]
-            
-            # 添加更多可能的快捷方式路径
-            if os.path.exists(folder_path) and os.path.isdir(folder_path):
-                try:
-                    for item in os.listdir(folder_path):
-                        # 确保文件名是正确的字符串格式
-                        if isinstance(item, bytes):
-                            try:
-                                item = item.decode('utf-8')
-                            except UnicodeDecodeError:
-                                try:
-                                    item = item.decode('gbk')
-                                except UnicodeDecodeError:
-                                    logger.error(f"无法解码文件名: {item}")
-                                    continue
-                        
-                        if item.lower().endswith('.lnk') and "配音" in item:
-                            shortcut_path = os.path.join(folder_path, item)
-                            if shortcut_path not in audio_shortcut_candidates:
-                                audio_shortcut_candidates.append(shortcut_path)
-                except Exception as e:
-                    logger.error(f"搜索配音快捷方式时出错: {str(e)}")
-            
-            # 检查所有候选快捷方式
-            for shortcut_path in audio_shortcut_candidates:
-                if os.path.exists(shortcut_path):
-                    logger.info(f"发现配音文件夹快捷方式: {shortcut_path}")
-                    target_path = resolve_shortcut(shortcut_path)
-                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
-                        result["audio_folder_paths"] = [target_path]
-                        break
+        # 记录搜索结果
+        if result_paths:
+            logger.debug(f"{indent}在 {folder_path} 中找到 {len(result_paths)} 个 '{folder_name}' 文件夹")
         else:
-            result["audio_folder_paths"] = [result["audio_folder"]]
+            logger.debug(f"{indent}在 {folder_path} 中未找到 '{folder_name}' 文件夹")
         
-        return result
+        return result_paths
 
     def compose_video(self, 
                     video_files: List[str], 
@@ -3948,3 +4053,228 @@ class VideoProcessor:
                     os.remove(list_file)
             except Exception:
                 pass
+
+    def _check_directory_for_media(self, directory, folder_type="视频"):
+        """
+        检查目录是否直接包含媒体文件
+        
+        Args:
+            directory: 要检查的目录路径
+            folder_type: 文件夹类型，"视频"或"配音"
+            
+        Returns:
+            bool: 是否包含对应类型的媒体文件
+        """
+        # 导入媒体文件扫描函数
+        from src.utils.file_utils import list_media_files, resolve_shortcut
+        
+        try:
+            # 检查目录是否存在
+            if not os.path.exists(directory):
+                logger.debug(f"目录不存在: {directory}")
+                return False
+                
+            if not os.path.isdir(directory):
+                # 如果是文件，检查是否是快捷方式
+                if directory.lower().endswith('.lnk'):
+                    logger.debug(f"检测到快捷方式: {directory}")
+                    try:
+                        # 尝试解析快捷方式
+                        target = resolve_shortcut(directory)
+                        if target and os.path.exists(target):
+                            if os.path.isdir(target):
+                                logger.debug(f"快捷方式指向目录: {target}")
+                                # 递归检查目标目录
+                                return self._check_directory_for_media(target, folder_type)
+                            elif os.path.isfile(target):
+                                # 如果快捷方式指向文件，检查文件类型
+                                if folder_type == "视频" and self._is_video_file(target):
+                                    logger.debug(f"快捷方式指向视频文件: {target}")
+                                    return True
+                                elif folder_type == "配音" and self._is_audio_file(target):
+                                    logger.debug(f"快捷方式指向音频文件: {target}")
+                                    return True
+                    except Exception as e:
+                        logger.warning(f"解析快捷方式失败: {directory}, 错误: {str(e)}")
+                return False
+                    
+            # 扫描目录中的媒体文件
+            media_files = list_media_files(directory, recursive=False)
+            
+            # 根据文件夹类型检查是否有对应的媒体文件
+            if folder_type == "视频":
+                videos = media_files.get('videos', [])
+                if videos:
+                    logger.debug(f"在目录 {directory} 中找到 {len(videos)} 个视频文件")
+                    return True
+                    
+                # 如果没有直接找到视频文件，检查是否有快捷方式指向视频文件
+                shortcuts = [f for f in os.listdir(directory) if f.lower().endswith('.lnk')]
+                for shortcut in shortcuts:
+                    shortcut_path = os.path.join(directory, shortcut)
+                    try:
+                        target = resolve_shortcut(shortcut_path)
+                        if target and os.path.exists(target):
+                            if os.path.isdir(target):
+                                # 如果快捷方式指向目录，递归检查
+                                if self._check_directory_for_media(target, folder_type):
+                                    logger.debug(f"快捷方式 {shortcut} 指向包含视频的目录: {target}")
+                                    return True
+                            elif self._is_video_file(target):
+                                logger.debug(f"快捷方式 {shortcut} 指向视频文件: {target}")
+                                return True
+                    except Exception as e:
+                        logger.debug(f"解析快捷方式失败: {shortcut_path}, 错误: {str(e)}")
+                    
+            elif folder_type == "配音":
+                audios = media_files.get('audios', [])
+                if audios:
+                    logger.debug(f"在目录 {directory} 中找到 {len(audios)} 个音频文件")
+                    return True
+                    
+                # 如果没有直接找到音频文件，检查是否有快捷方式指向音频文件
+                shortcuts = [f for f in os.listdir(directory) if f.lower().endswith('.lnk')]
+                for shortcut in shortcuts:
+                    shortcut_path = os.path.join(directory, shortcut)
+                    try:
+                        target = resolve_shortcut(shortcut_path)
+                        if target and os.path.exists(target):
+                            if os.path.isdir(target):
+                                # 如果快捷方式指向目录，递归检查
+                                if self._check_directory_for_media(target, folder_type):
+                                    logger.debug(f"快捷方式 {shortcut} 指向包含音频的目录: {target}")
+                                    return True
+                            elif self._is_audio_file(target):
+                                logger.debug(f"快捷方式 {shortcut} 指向音频文件: {target}")
+                                return True
+                    except Exception as e:
+                        logger.debug(f"解析快捷方式失败: {shortcut_path}, 错误: {str(e)}")
+            
+            # 检查子文件夹中是否有对应类型的媒体文件
+            # 这是一个浅层检查，只检查直接子文件夹
+            try:
+                for item in os.listdir(directory):
+                    item_path = os.path.join(directory, item)
+                    if os.path.isdir(item_path):
+                        # 检查文件夹名称是否与要查找的类型相关
+                        if (folder_type == "视频" and any(keyword in item.lower() for keyword in ["video", "视频", "影片", "影像"])) or \
+                           (folder_type == "配音" and any(keyword in item.lower() for keyword in ["audio", "配音", "声音", "音频"])):
+                            # 递归检查子文件夹
+                            if self._check_directory_for_media(item_path, folder_type):
+                                logger.debug(f"在子文件夹 {item} 中找到{folder_type}文件")
+                                return True
+            except Exception as e:
+                logger.debug(f"检查子文件夹时出错: {str(e)}")
+            
+            return False
+        except Exception as e:
+            logger.error(f"检查目录媒体文件时出错: {directory}, 错误: {str(e)}")
+            return False
+
+    def _scan_media_files(self, folder_path, folder_type="视频", max_depth=3, _current_depth=0):
+        """
+        扫描文件夹中的媒体文件，支持多层快捷方式
+        
+        Args:
+            folder_path: 要扫描的文件夹路径
+            folder_type: 文件夹类型，"视频"或"配音"
+            max_depth: 最大搜索深度
+            _current_depth: 当前搜索深度
+            
+        Returns:
+            list: 媒体文件列表
+        """
+        from src.utils.file_utils import list_media_files, resolve_shortcut
+        
+        # 添加缩进以便于日志阅读
+        indent = "  " * _current_depth
+        
+        # 检查搜索深度
+        if _current_depth > max_depth:
+            logger.debug(f"{indent}达到最大搜索深度 {max_depth}，停止搜索: {folder_path}")
+            return []
+        
+        # 检查路径是否存在
+        if not os.path.exists(folder_path):
+            logger.debug(f"{indent}路径不存在: {folder_path}")
+            return []
+        
+        media_files = []
+        
+        # 如果是快捷方式文件
+        if os.path.isfile(folder_path) and folder_path.lower().endswith('.lnk'):
+            logger.debug(f"{indent}检测到快捷方式文件: {folder_path}")
+            try:
+                # 尝试解析快捷方式
+                target = resolve_shortcut(folder_path)
+                if target and os.path.exists(target):
+                    logger.debug(f"{indent}快捷方式解析成功: {target}")
+                    # 递归扫描目标路径
+                    return self._scan_media_files(target, folder_type, max_depth, _current_depth + 1)
+                else:
+                    logger.warning(f"{indent}快捷方式解析失败或目标不存在: {folder_path}")
+            except Exception as e:
+                logger.warning(f"{indent}解析快捷方式出错: {folder_path}, 错误: {str(e)}")
+            return []
+        
+        # 如果是目录
+        if os.path.isdir(folder_path):
+            logger.debug(f"{indent}扫描目录: {folder_path}")
+            
+            # 直接扫描媒体文件
+            media_dict = list_media_files(folder_path, recursive=False)
+            
+            # 根据文件夹类型获取对应的媒体文件
+            if folder_type == "视频":
+                found_files = media_dict.get('videos', [])
+                if found_files:
+                    logger.debug(f"{indent}在 {folder_path} 中找到 {len(found_files)} 个视频文件")
+                    media_files.extend(found_files)
+            elif folder_type == "配音":
+                found_files = media_dict.get('audios', [])
+                if found_files:
+                    logger.debug(f"{indent}在 {folder_path} 中找到 {len(found_files)} 个音频文件")
+                    media_files.extend(found_files)
+            
+            # 检查目录中的快捷方式
+            try:
+                for item in os.listdir(folder_path):
+                    item_path = os.path.join(folder_path, item)
+                    
+                    # 处理快捷方式
+                    if item.lower().endswith('.lnk'):
+                        logger.debug(f"{indent}检查快捷方式: {item_path}")
+                        try:
+                            target = resolve_shortcut(item_path)
+                            if target and os.path.exists(target):
+                                logger.debug(f"{indent}快捷方式指向: {target}")
+                                # 递归扫描目标
+                                shortcut_files = self._scan_media_files(target, folder_type, max_depth, _current_depth + 1)
+                                if shortcut_files:
+                                    media_files.extend(shortcut_files)
+                        except Exception as e:
+                            logger.debug(f"{indent}解析快捷方式失败: {item_path}, 错误: {str(e)}")
+                    
+                    # 检查子目录
+                    elif os.path.isdir(item_path):
+                        # 只在特定情况下深入搜索子目录
+                        should_search = False
+                        
+                        # 如果子目录名称包含特定关键词，则搜索
+                        if (folder_type == "视频" and any(keyword in item.lower() for keyword in ["video", "视频", "影片", "影像"])) or \
+                           (folder_type == "配音" and any(keyword in item.lower() for keyword in ["audio", "配音", "声音", "音频"])):
+                            should_search = True
+                        
+                        # 如果当前深度较低，也可以搜索
+                        if _current_depth < 1:
+                            should_search = True
+                        
+                        if should_search:
+                            logger.debug(f"{indent}搜索子目录: {item}")
+                            sub_files = self._scan_media_files(item_path, folder_type, max_depth, _current_depth + 1)
+                            if sub_files:
+                                media_files.extend(sub_files)
+            except Exception as e:
+                logger.warning(f"{indent}扫描目录出错: {folder_path}, 错误: {str(e)}")
+        
+        return media_files

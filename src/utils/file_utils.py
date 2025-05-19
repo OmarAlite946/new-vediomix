@@ -23,83 +23,166 @@ logger = get_logger()
 video_extensions = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm"}
 audio_extensions = {".mp3", ".wav", ".aac", ".ogg", ".flac", ".m4a"}
 
-def resolve_shortcut(shortcut_path: Union[str, Path]) -> Optional[str]:
+def resolve_shortcut(shortcut_path):
     """
-    解析Windows快捷方式(.lnk文件)，返回其目标路径
+    解析Windows快捷方式(.lnk)文件，返回目标路径
     
     Args:
         shortcut_path: 快捷方式文件路径
         
     Returns:
-        Optional[str]: 快捷方式目标路径，如果解析失败则返回None
+        str: 目标路径，如果解析失败则返回None
     """
-    if not os.path.exists(shortcut_path) or not str(shortcut_path).lower().endswith('.lnk'):
-        logger.debug(f"不是有效的快捷方式文件: {shortcut_path}")
+    import sys
+    import subprocess
+    import time
+    
+    # 检查路径是否有效
+    if not shortcut_path or not os.path.exists(shortcut_path):
+        logger.warning(f"快捷方式路径无效或不存在: {shortcut_path}")
         return None
-        
+    
+    # 检查是否是.lnk文件
+    if not shortcut_path.lower().endswith('.lnk'):
+        logger.warning(f"文件不是快捷方式(.lnk): {shortcut_path}")
+        return None
+    
+    # 跟踪COM初始化状态
+    com_initialized = False
+    
+    # 方法1: 使用win32com解析快捷方式
     try:
         import win32com.client
         import pythoncom
         
-        # 初始化COM
-        pythoncom.CoInitialize()
-        
+        # 尝试初始化COM（多线程模式）
         try:
-            # 确保使用绝对路径
-            abs_shortcut_path = os.path.abspath(str(shortcut_path))
+            pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+            com_initialized = True
+            logger.debug("COM已初始化（多线程模式）")
+        except Exception as e:
+            logger.debug(f"多线程COM初始化失败: {str(e)}")
             
-            shell = win32com.client.Dispatch("WScript.Shell")
-            shortcut = shell.CreateShortCut(abs_shortcut_path)
-            target_path = shortcut.Targetpath
-            
-            logger.debug(f"解析快捷方式: {abs_shortcut_path} -> {target_path}")
-            
-            # 检查目标路径是否存在
-            if not target_path:
-                logger.warning(f"快捷方式目标路径为空: {abs_shortcut_path}")
-                return None
+            # 尝试基本初始化
+            try:
+                pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+                com_initialized = True
+                logger.debug("COM已初始化（单线程模式）")
+            except Exception as e:
+                logger.debug(f"单线程COM初始化失败: {str(e)}")
                 
-            # 如果目标路径是相对路径，尝试转换为绝对路径
-            if not os.path.isabs(target_path):
-                # 尝试以快捷方式所在目录为基准
-                shortcut_dir = os.path.dirname(abs_shortcut_path)
-                possible_target = os.path.join(shortcut_dir, target_path)
-                
-                if os.path.exists(possible_target) and os.path.isdir(possible_target):
-                    target_path = possible_target
-                    logger.info(f"相对路径转换为绝对路径: {target_path}")
-            
-            # 检查目标路径是否存在并且是目录
-            if os.path.exists(target_path) and os.path.isdir(target_path):
-                logger.info(f"解析快捷方式成功: {abs_shortcut_path} -> {target_path}")
-                return target_path
-            else:
-                logger.warning(f"快捷方式目标不存在或不是目录: {abs_shortcut_path} -> {target_path}")
-                
-                # 尝试使用其他方法解析
+                # 最后尝试最基本的初始化
                 try:
-                    # 尝试获取Windows资源管理器中的目标
-                    import subprocess
-                    cmd = ['cmd', '/c', 'dir', '/A:L', abs_shortcut_path]
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    
-                    if result.returncode == 0:
-                        for line in result.stdout.splitlines():
-                            if '->' in line:
-                                target = line.split('->')[-1].strip()
-                                if os.path.exists(target) and os.path.isdir(target):
-                                    logger.info(f"通过cmd解析快捷方式成功: {abs_shortcut_path} -> {target}")
-                                    return target
+                    pythoncom.CoInitialize()
+                    com_initialized = True
+                    logger.debug("COM已初始化（基本模式）")
                 except Exception as e:
-                    logger.debug(f"尝试cmd解析快捷方式失败: {str(e)}")
-                
-                return None
-        finally:
-            # 无论如何都释放COM
-            pythoncom.CoUninitialize()
+                    logger.debug(f"基本COM初始化失败: {str(e)}")
+        
+        # 创建Shell对象
+        shell = win32com.client.Dispatch("WScript.Shell")
+        shortcut = shell.CreateShortCut(shortcut_path)
+        target_path = shortcut.Targetpath
+        
+        # 检查目标路径是否有效
+        if target_path and len(target_path.strip()) > 0:
+            logger.debug(f"成功解析快捷方式: {shortcut_path} -> {target_path}")
+            
+            # 释放COM资源
+            if com_initialized:
+                try:
+                    pythoncom.CoUninitialize()
+                    logger.debug("COM资源已释放")
+                except:
+                    pass
+                    
+            return target_path
+        else:
+            logger.warning(f"快捷方式目标为空: {shortcut_path}")
     except Exception as e:
-        logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
-        return None
+        # 如果是COM初始化错误，尝试重新初始化
+        if "尚未调用CoInitialize" in str(e) or "CoInitialize has not been called" in str(e):
+            logger.debug(f"COM初始化错误，尝试重新初始化: {str(e)}")
+            
+            # 重新尝试初始化COM
+            try:
+                if com_initialized:
+                    try:
+                        pythoncom.CoUninitialize()
+                    except:
+                        pass
+                
+                # 等待一小段时间
+                time.sleep(0.2)
+                
+                # 尝试重新初始化
+                pythoncom.CoInitialize()
+                com_initialized = True
+                
+                # 重新创建Shell对象
+                shell = win32com.client.Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortCut(shortcut_path)
+                target_path = shortcut.Targetpath
+                
+                # 检查目标路径是否有效
+                if target_path and len(target_path.strip()) > 0:
+                    logger.debug(f"重试后成功解析快捷方式: {shortcut_path} -> {target_path}")
+                    
+                    # 释放COM资源
+                    if com_initialized:
+                        try:
+                            pythoncom.CoUninitialize()
+                        except:
+                            pass
+                            
+                    return target_path
+                else:
+                    logger.warning(f"重试后快捷方式目标为空: {shortcut_path}")
+            except Exception as retry_error:
+                logger.warning(f"重试解析快捷方式失败: {str(retry_error)}")
+        else:
+            logger.warning(f"使用win32com解析快捷方式失败: {str(e)}")
+    finally:
+        # 确保释放COM资源
+        if com_initialized:
+            try:
+                pythoncom.CoUninitialize()
+            except:
+                pass
+    
+    # 方法2: 如果win32com失败，尝试使用PowerShell命令行解析
+    try:
+        if sys.platform == 'win32':
+            # 使用PowerShell命令解析快捷方式
+            cmd = ['powershell', '-Command', f'(New-Object -ComObject WScript.Shell).CreateShortcut("{shortcut_path}").TargetPath']
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=5)
+            if result.returncode == 0:
+                target_path = result.stdout.strip()
+                if target_path and len(target_path.strip()) > 0:
+                    logger.debug(f"使用PowerShell成功解析快捷方式: {shortcut_path} -> {target_path}")
+                    return target_path
+                else:
+                    logger.warning(f"PowerShell解析的快捷方式目标为空: {shortcut_path}")
+    except Exception as e:
+        logger.warning(f"使用PowerShell解析快捷方式失败: {str(e)}")
+    
+    # 方法3: 如果前面的方法都失败了，尝试使用pylnk3库
+    try:
+        import pylnk3
+        target_path = pylnk3.parse(shortcut_path).path
+        if target_path and len(target_path.strip()) > 0:
+            logger.debug(f"使用pylnk3成功解析快捷方式: {shortcut_path} -> {target_path}")
+            return target_path
+        else:
+            logger.warning(f"pylnk3解析的快捷方式目标为空: {shortcut_path}")
+    except ImportError:
+        logger.debug("pylnk3库未安装，跳过此方法")
+    except Exception as e:
+        logger.warning(f"使用pylnk3解析快捷方式失败: {str(e)}")
+    
+    # 所有方法都失败了
+    logger.error(f"无法解析快捷方式: {shortcut_path}")
+    return None
 
 def ensure_dir_exists(directory: Union[str, Path]) -> Path:
     """
