@@ -1,1 +1,1 @@
-D:/ffmeg/ffmpeg-7.1.1-essentials_build/bin/ffmpeg.exe
+D:/ffmpeg_compat/ffmpeg.exe

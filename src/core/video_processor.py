@@ -685,15 +685,18 @@ class VideoProcessor:
             folder_key: 素材数据字典中的键
             material_data: 素材数据字典
         """
-        # 导入解析快捷方式的函数
+        # 导入解析快捷方式的函数和COM组件初始化函数
         from src.utils.file_utils import resolve_shortcut
         
         # 查找视频文件夹，包括处理快捷方式
         video_folder = os.path.join(folder_path, "视频")
-        video_folder_paths = [video_folder]
+        video_folder_paths = []
         
-        # 检查视频文件夹是否存在，如果不存在则尝试查找快捷方式
-        if not os.path.exists(video_folder) or not os.path.isdir(video_folder):
+        # 检查视频文件夹是否存在并是目录
+        if os.path.exists(video_folder) and os.path.isdir(video_folder):
+            logger.info(f"在路径 {folder_path} 中直接找到视频文件夹: {video_folder}")
+            video_folder_paths = [video_folder]
+        else:
             logger.debug(f"常规视频文件夹不存在，尝试寻找快捷方式: {video_folder}")
             
             # 检查所有可能的命名格式
@@ -703,62 +706,93 @@ class VideoProcessor:
                 os.path.join(folder_path, "视频快捷方式.lnk")
             ]
             
-            # 添加更多可能的快捷方式路径
-            for item in os.listdir(folder_path) if os.path.exists(folder_path) and os.path.isdir(folder_path) else []:
-                if item.lower().endswith('.lnk') and "视频" in item:
-                    shortcut_path = os.path.join(folder_path, item)
-                    if shortcut_path not in video_shortcut_candidates:
-                        video_shortcut_candidates.append(shortcut_path)
-            
             # 检查所有候选快捷方式
             for shortcut_path in video_shortcut_candidates:
                 if os.path.exists(shortcut_path):
                     logger.info(f"发现视频文件夹快捷方式: {shortcut_path}")
-                    target_path = resolve_shortcut(shortcut_path)
-                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
-                        video_folder_paths = [target_path]
-                        break
+                    try:
+                        target_path = resolve_shortcut(shortcut_path)
+                        if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                            logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                            video_folder_paths = [target_path]
+                            break
+                    except Exception as e:
+                        logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
+            
+            # 如果未找到特定命名格式的快捷方式，尝试查找包含"视频"的所有.lnk文件
+            if not video_folder_paths:
+                try:
+                    # 遍历所有文件寻找包含"视频"的快捷方式
+                    for item in os.listdir(folder_path):
+                        # 确保文件名是正确的字符串格式
+                        if isinstance(item, bytes):
+                            try:
+                                item = item.decode('utf-8')
+                            except UnicodeDecodeError:
+                                try:
+                                    item = item.decode('gbk')
+                                except UnicodeDecodeError:
+                                    logger.error(f"无法解码文件名: {item}")
+                                    continue
+                        
+                        # 检查是否是包含"视频"的快捷方式
+                        if item.lower().endswith('.lnk') and "视频" in item:
+                            shortcut_path = os.path.join(folder_path, item)
+                            if shortcut_path not in video_shortcut_candidates:
+                                logger.info(f"发现额外的视频快捷方式: {shortcut_path}")
+                                try:
+                                    target_path = resolve_shortcut(shortcut_path)
+                                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                                        logger.info(f"解析额外快捷方式成功: {shortcut_path} -> {target_path}")
+                                        video_folder_paths = [target_path]
+                                        break
+                                except Exception as e:
+                                    logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
+                except Exception as e:
+                    logger.error(f"搜索视频快捷方式时出错: {str(e)}")
         
         # 处理视频文件夹 - 优化：使用快速方法获取视频时长
         video_info_list = []
-        for video_folder in video_folder_paths:
-            if os.path.exists(video_folder) and os.path.isdir(video_folder):
-                # 获取所有视频文件
-                video_files = []
-                for root, _, files in os.walk(video_folder):
-                    for file in files:
-                        if file.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".wmv")):
-                            video_files.append(os.path.join(root, file))
-                
-                logger.info(f"在文件夹 '{video_folder}' 中找到 {len(video_files)} 个视频文件")
-                
-                # 优化：尝试使用快速方法获取视频时长
-                for video_file in video_files:
-                    try:
-                        # 尝试快速获取视频时长
-                        duration = self._get_video_duration_fast(video_file)
-                        
-                        # 创建视频信息对象
-                        video_info = {
-                            "path": video_file,
-                            "duration": duration,  # 使用快速方法获取的时长
-                            "fps": -1,  # 这些信息暂不获取
-                            "width": -1,
-                            "height": -1
-                        }
-                        video_info_list.append(video_info)
-                    except Exception as e:
-                        logger.warning(f"处理视频路径失败: {video_file}, 错误: {str(e)}")
-                        # 创建基本信息对象，不包含时长
-                        video_info = {
-                            "path": video_file,
-                            "duration": -1,  # 使用-1表示未知时长
-                            "fps": -1,
-                            "width": -1,
-                            "height": -1
-                        }
-                        video_info_list.append(video_info)
+        if video_folder_paths:
+            for video_folder in video_folder_paths:
+                if os.path.exists(video_folder) and os.path.isdir(video_folder):
+                    # 获取所有视频文件
+                    video_files = []
+                    for root, _, files in os.walk(video_folder):
+                        for file in files:
+                            if file.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".wmv")):
+                                video_files.append(os.path.join(root, file))
+                    
+                    logger.info(f"在文件夹 '{video_folder}' 中找到 {len(video_files)} 个视频文件")
+                    
+                    # 优化：尝试使用快速方法获取视频时长
+                    for video_file in video_files:
+                        try:
+                            # 尝试快速获取视频时长
+                            duration = self._get_video_duration_fast(video_file)
+                            
+                            # 创建视频信息对象
+                            video_info = {
+                                "path": video_file,
+                                "duration": duration,  # 使用快速方法获取的时长
+                                "fps": -1,  # 这些信息暂不获取
+                                "width": -1,
+                                "height": -1
+                            }
+                            video_info_list.append(video_info)
+                        except Exception as e:
+                            logger.warning(f"处理视频路径失败: {video_file}, 错误: {str(e)}")
+                            # 创建基本信息对象，不包含时长
+                            video_info = {
+                                "path": video_file,
+                                "duration": -1,  # 使用-1表示未知时长
+                                "fps": -1,
+                                "width": -1,
+                                "height": -1
+                            }
+                            video_info_list.append(video_info)
+        else:
+            logger.warning(f"文件夹 '{folder_key}' 中没有找到视频文件夹或其快捷方式")
         
         # 保存视频列表
         material_data[folder_key]["videos"] = video_info_list
@@ -766,10 +800,13 @@ class VideoProcessor:
         
         # 查找配音文件夹，包括处理快捷方式
         audio_folder = os.path.join(folder_path, "配音")
-        audio_folder_paths = [audio_folder]
+        audio_folder_paths = []
         
-        # 检查配音文件夹是否存在，如果不存在则尝试查找快捷方式
-        if not os.path.exists(audio_folder) or not os.path.isdir(audio_folder):
+        # 检查配音文件夹是否存在并是目录
+        if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
+            logger.info(f"在路径 {folder_path} 中直接找到配音文件夹: {audio_folder}")
+            audio_folder_paths = [audio_folder]
+        else:
             logger.debug(f"常规配音文件夹不存在，尝试寻找快捷方式: {audio_folder}")
             
             # 检查所有可能的命名格式
@@ -779,44 +816,75 @@ class VideoProcessor:
                 os.path.join(folder_path, "配音快捷方式.lnk")
             ]
             
-            # 添加更多可能的快捷方式路径
-            for item in os.listdir(folder_path) if os.path.exists(folder_path) and os.path.isdir(folder_path) else []:
-                if item.lower().endswith('.lnk') and "配音" in item:
-                    shortcut_path = os.path.join(folder_path, item)
-                    if shortcut_path not in audio_shortcut_candidates:
-                        audio_shortcut_candidates.append(shortcut_path)
-            
             # 检查所有候选快捷方式
             for shortcut_path in audio_shortcut_candidates:
                 if os.path.exists(shortcut_path):
                     logger.info(f"发现配音文件夹快捷方式: {shortcut_path}")
-                    target_path = resolve_shortcut(shortcut_path)
-                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
-                        logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
-                        audio_folder_paths = [target_path]
-                        break
+                    try:
+                        target_path = resolve_shortcut(shortcut_path)
+                        if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                            logger.info(f"解析快捷方式成功: {shortcut_path} -> {target_path}")
+                            audio_folder_paths = [target_path]
+                            break
+                    except Exception as e:
+                        logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
+            
+            # 如果未找到特定命名格式的快捷方式，尝试查找包含"配音"的所有.lnk文件
+            if not audio_folder_paths:
+                try:
+                    # 遍历所有文件寻找包含"配音"的快捷方式
+                    for item in os.listdir(folder_path):
+                        # 确保文件名是正确的字符串格式
+                        if isinstance(item, bytes):
+                            try:
+                                item = item.decode('utf-8')
+                            except UnicodeDecodeError:
+                                try:
+                                    item = item.decode('gbk')
+                                except UnicodeDecodeError:
+                                    logger.error(f"无法解码文件名: {item}")
+                                    continue
+                        
+                        # 检查是否是包含"配音"的快捷方式
+                        if item.lower().endswith('.lnk') and "配音" in item:
+                            shortcut_path = os.path.join(folder_path, item)
+                            if shortcut_path not in audio_shortcut_candidates:
+                                logger.info(f"发现额外的配音快捷方式: {shortcut_path}")
+                                try:
+                                    target_path = resolve_shortcut(shortcut_path)
+                                    if target_path and os.path.exists(target_path) and os.path.isdir(target_path):
+                                        logger.info(f"解析额外快捷方式成功: {shortcut_path} -> {target_path}")
+                                        audio_folder_paths = [target_path]
+                                        break
+                                except Exception as e:
+                                    logger.warning(f"解析快捷方式失败 {shortcut_path}: {str(e)}")
+                except Exception as e:
+                    logger.error(f"搜索配音快捷方式时出错: {str(e)}")
         
         # 处理配音文件夹 - 配音文件需要获取时长，因为它们决定了视频选择
         audio_info_list = []
-        for audio_folder in audio_folder_paths:
-            if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
-                # 获取所有音频文件
-                audio_files = []
-                for root, _, files in os.walk(audio_folder):
-                    for file in files:
-                        if file.lower().endswith((".mp3", ".wav", ".aac", ".ogg", ".flac")):
-                            audio_files.append(os.path.join(root, file))
-                
-                logger.info(f"在文件夹 '{audio_folder}' 中找到 {len(audio_files)} 个音频文件")
-                
-                # 配音文件需要获取时长，因为它们决定了视频选择
-                for audio_file in audio_files:
-                    try:
-                        audio_info = self._get_audio_metadata(audio_file)
-                        if audio_info and audio_info.get("duration", 0) > 0:
-                            audio_info_list.append(audio_info)
-                    except Exception as e:
-                        logger.warning(f"分析音频失败: {audio_file}, 错误: {str(e)}")
+        if audio_folder_paths:
+            for audio_folder in audio_folder_paths:
+                if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
+                    # 获取所有音频文件
+                    audio_files = []
+                    for root, _, files in os.walk(audio_folder):
+                        for file in files:
+                            if file.lower().endswith((".mp3", ".wav", ".aac", ".ogg", ".flac", ".m4a")):
+                                audio_files.append(os.path.join(root, file))
+                    
+                    logger.info(f"在文件夹 '{audio_folder}' 中找到 {len(audio_files)} 个音频文件")
+                    
+                    # 配音文件需要获取时长，因为它们决定了视频选择
+                    for audio_file in audio_files:
+                        try:
+                            audio_info = self._get_audio_metadata(audio_file)
+                            if audio_info and audio_info.get("duration", 0) > 0:
+                                audio_info_list.append(audio_info)
+                        except Exception as e:
+                            logger.warning(f"分析音频失败: {audio_file}, 错误: {str(e)}")
+        else:
+            logger.warning(f"文件夹 '{folder_key}' 中没有找到配音文件夹或其快捷方式")
         
         # 保存音频列表
         material_data[folder_key]["audios"] = audio_info_list
