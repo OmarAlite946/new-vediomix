@@ -1857,20 +1857,29 @@ class VideoProcessor:
                     logger.info(f"创建无音频临时合并视频: {' '.join(temp_merge_cmd)}")
                     subprocess.run(temp_merge_cmd, check=True)
                     
-                    # 创建临时音频文件提取原始视频的音频
+                    # 修改此部分，直接使用concat合并的视频音频
+                    # 不再单独提取音频，而是使用原始场景视频的音频（含配音和缓冲）
+                    temp_with_original_audio = os.path.join(temp_dir, "temp_with_original_audio.mp4")
+                    
+                    # 先合并所有场景视频（保留原始配音+缓冲）
+                    original_audio_cmd = merge_cmd.copy()
+                    original_audio_cmd.append(temp_with_original_audio)
+                    
+                    logger.info(f"合并保留原始音频（配音+缓冲）的场景视频: {' '.join(original_audio_cmd)}")
+                    subprocess.run(original_audio_cmd, check=True)
+                    
+                    # 从合并视频中提取音频（保留了每个配音间的缓冲）
                     temp_audio = os.path.join(temp_dir, "temp_original_audio.aac")
                     audio_extract_cmd = [
                         self._get_ffmpeg_cmd(),
                         "-y",
-                        "-f", "concat",
-                        "-safe", "0",
-                        "-i", concat_file,
+                        "-i", temp_with_original_audio,  # 合并后的含原始音频的视频
                         "-c:a", "aac",
                         "-vn",  # 不包含视频
                         temp_audio
                     ]
                     
-                    logger.info(f"提取原始音频: {' '.join(audio_extract_cmd)}")
+                    logger.info(f"提取合并视频的原始音频（保留每个配音间的0.1秒留白）: {' '.join(audio_extract_cmd)}")
                     subprocess.run(audio_extract_cmd, check=True)
                     
                     # 添加背景音乐和原始音频
@@ -1878,7 +1887,7 @@ class VideoProcessor:
                         self._get_ffmpeg_cmd(),
                         "-y",
                         "-i", temp_merge_without_audio,  # 视频（无音频）
-                        "-i", temp_audio,  # 原始音频
+                        "-i", temp_audio,  # 原始音频（已包含配音间的留白）
                         "-i", bgm_path,  # 背景音乐
                         "-filter_complex",
                         f"[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume={self.settings.get('voice_volume', 1.0)}[voice];" +
