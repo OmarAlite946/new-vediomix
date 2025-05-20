@@ -1285,7 +1285,10 @@ class VideoProcessor:
                              progress_start: float = 0,
                              progress_end: float = 100) -> str:
         """
-        处理单个视频，包括素材合成、音频处理等
+        处理单个视频，按照工作原理文档实现:
+        1. 分场景选择视频（单视频或多视频模式由用户设置决定）
+        2. 根据配音时长裁剪视频（不变速）
+        3. 将场景视频按顺序拼接
         
         Args:
             material_data: 素材数据字典，包含每个场景的视频和音频文件
@@ -1298,7 +1301,7 @@ class VideoProcessor:
             str: 处理后的视频路径，失败时返回None
         """
         logger.info(f"开始处理单个视频: {output_path}")
-        
+
         # 处理输出路径 - 在Windows上使用短路径格式以避免Unicode问题
         if os.name == 'nt':
             try:
@@ -1370,7 +1373,8 @@ class VideoProcessor:
                 scenes.append({
                     "key": folder_key,
                     "videos": folder_data.get("videos", []),
-                    "audios": folder_data.get("audios", [])
+                    "audios": folder_data.get("audios", []),
+                    "extract_mode": folder_data.get("extract_mode", "single_video")  # 从用户设置中获取抽取模式
                 })
                 
                 # 计算场景音频时长
@@ -1402,453 +1406,342 @@ class VideoProcessor:
                 scene_videos_list = scene["videos"]
                 scene_audios_list = scene["audios"]
                 
-                # 确定处理逻辑 - 音频较长则混剪模式，音频较短则单视频模式
-                scene_audio_duration = sum(audio.get("duration", 0) for audio in scene_audios_list)
+                # 确定场景的音频时长 - 如果有多个音频，随机选择一个或使用默认时长
+                scene_audio_duration = 0
+                scene_audio_file = None
                 
-                # 如果场景中有音频文件
                 if scene_audios_list:
-                    # 创建场景的concat文件
-                    concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
-                    scene_concat_files.append(concat_file_path)
-                    
-                    # 如果音频较长，需要多个视频混剪
-                    if scene_audio_duration > 15:  # 假设超过15秒的音频需要混剪
-                        logger.info(f"场景 {i+1}/{len(scenes)} 使用混剪模式: 音频时长 {scene_audio_duration:.2f}秒")
+                    # 随机选择一个音频文件
+                    import random
+                    selected_audio = random.choice(scene_audios_list)
+                    scene_audio_duration = selected_audio.get("duration", 0)
+                    scene_audio_file = selected_audio.get("path")
+                    logger.info(f"场景 {i+1} 选择配音: {os.path.basename(scene_audio_file)}, 时长: {scene_audio_duration:.2f}秒")
+                else:
+                    # 使用默认的音频时长
+                    scene_audio_duration = self.settings.get("default_audio_duration", 10.0)
+                    logger.info(f"场景 {i+1} 使用默认配音时长: {scene_audio_duration:.2f}秒")
+                
+                # 【工作原理实现】使用用户设置的抽取模式，而不是自动决定
+                use_multi_video = scene.get("extract_mode") == "multi_video"
+                logger.info(f"场景 {i+1} 使用抽取模式: {'多视频混剪' if use_multi_video else '单视频'}")
+                
+                # 根据模式处理视频
+                if use_multi_video:
+                    # 多视频模式 - 随机选择多个视频直到总时长超过配音时长
+                    logger.info(f"场景 {i+1} 使用多视频混剪模式: 配音时长 {scene_audio_duration:.2f}秒")
+                    if scene_videos_list:
+                        # 随机打乱视频列表
+                        import random
+                        shuffled_videos = list(scene_videos_list)
+                        random.shuffle(shuffled_videos)
+                        
+                        # 选择视频直到总时长超过音频时长
+                        selected_videos = []
+                        total_video_duration = 0
+                        
+                        for video in shuffled_videos:
+                            video_duration = video.get("duration", 0)
+                            selected_videos.append(video)
+                            total_video_duration += video_duration
+                            if total_video_duration >= scene_audio_duration:
+                                break
+                        
+                        if not selected_videos:
+                            logger.warning(f"场景 {i+1} 没有找到足够的视频，跳过")
+                            continue
+                        
+                        logger.info(f"为场景 {i+1} 选择了 {len(selected_videos)} 个视频，总时长 {total_video_duration:.2f}秒")
                         
                         # 创建concat文件
+                        concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
+                        scene_concat_files.append(concat_file_path)
+                        
                         with open(concat_file_path, 'w', encoding='utf-8') as concat_file:
-                            for video in scene_videos_list:
+                            # 写入除最后一个视频外的所有视频（不裁剪）
+                            for j, video in enumerate(selected_videos[:-1]):
                                 video_file = video["path"]
-                                # 确保路径是字符串
                                 if not isinstance(video_file, str):
                                     video_file = str(video_file)
-                                # 处理路径中的单引号，避免ffmpeg命令出错
                                 video_file_escaped = video_file.replace("'", "\\'")
                                 concat_file.write(f"file '{video_file_escaped}'\n")
-                                
-                        # 确定音频文件
-                        audio_file = scene_audios_list[0]["path"] if scene_audios_list else None
-                        
-                        # 使用FFmpeg命令合并视频文件并替换音频
-                        if audio_file:
-                            # 确保路径是字符串
-                            if not isinstance(audio_file, str):
-                                audio_file = str(audio_file)
-                                
-                            # 在Windows上使用短路径
-                            if os.name == 'nt':
-                                try:
-                                    import win32api
-                                    audio_file = win32api.GetShortPathName(audio_file)
-                                except Exception as e:
-                                    logger.warning(f"无法将音频路径转换为短路径: {str(e)}")
                             
-                            # FFmpeg命令: 拼接视频并替换音频
-                            cmd = [
-                                self._get_ffmpeg_cmd(),
-                                "-y",  # 覆盖已存在的文件
-                                "-f", "concat",  # 使用concat协议
-                                "-safe", "0",  # 允许不安全的文件路径
-                                "-i", concat_file_path,  # 输入concat文件
-                                "-i", audio_file,  # 输入音频文件
-                                "-c:v", "copy",  # 复制视频流，避免重新编码
-                                "-map", "0:v:0",  # 选择第一个输入的视频流
-                                "-map", "1:a:0",  # 选择第二个输入的音频流
-                                "-shortest",  # 以最短的输入长度为准
-                                scene_output  # 输出文件
-                            ]
-                            
-                            # 执行FFmpeg命令
-                            try:
-                                logger.info(f"执行FFmpeg命令拼接视频: {' '.join(cmd)}")
-                                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                stdout, stderr = process.communicate()
+                            # 处理最后一个视频 - 如果需要裁剪
+                            if selected_videos:
+                                last_video = selected_videos[-1]
+                                last_video_path = last_video["path"]
+                                if not isinstance(last_video_path, str):
+                                    last_video_path = str(last_video_path)
                                 
-                                if process.returncode != 0:
-                                    logger.error(f"FFmpeg命令执行失败: {stderr.decode()}")
-                                    return None
+                                # 计算最后一个视频应该的时长
+                                previous_videos_duration = sum(v.get("duration", 0) for v in selected_videos[:-1])
+                                last_video_needed_duration = scene_audio_duration - previous_videos_duration
                                 
-                                logger.info(f"场景 {i+1} 处理完成: {scene_output}")
-                                scene_videos.append(scene_output)
-                            except Exception as e:
-                                logger.error(f"执行FFmpeg命令失败: {str(e)}")
-                                return None
-                        else:
-                            # 无音频时只合并视频
-                            cmd = [
-                                self._get_ffmpeg_cmd(),
-                                "-y",
-                                "-f", "concat",
-                                "-safe", "0",
-                                "-i", concat_file_path,
-                                "-c", "copy",
-                                scene_output
-                            ]
-                            
-                            # 执行FFmpeg命令
-                            try:
-                                logger.info(f"执行FFmpeg命令拼接视频(无音频): {' '.join(cmd)}")
-                                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                stdout, stderr = process.communicate()
+                                # 如果需要裁剪最后一个视频（只有当需要裁剪的时长小于视频原始时长）
+                                last_video_duration = last_video.get("duration", 0)
                                 
-                                if process.returncode != 0:
-                                    logger.error(f"FFmpeg命令执行失败: {stderr.decode()}")
-                                    return None
-                                
-                                logger.info(f"场景 {i+1} 处理完成: {scene_output}")
-                                scene_videos.append(scene_output)
-                            except Exception as e:
-                                logger.error(f"执行FFmpeg命令失败: {str(e)}")
-                                return None
-                    else:
-                        # 音频较短，使用第一个视频
-                        logger.info(f"场景 {i+1}/{len(scenes)} 使用单视频模式: 音频时长 {scene_audio_duration:.2f}秒")
-                        
-                        if scene_videos_list:
-                            # 获取第一个视频
-                            video_file = scene_videos_list[0]["path"]
-                            
-                            # 确定音频文件
-                            audio_file = scene_audios_list[0]["path"] if scene_audios_list else None
-                            
-                            # 替换音频
-                            if audio_file:
-                                # 在Windows上使用短路径
-                                if os.name == 'nt':
+                                if 0 < last_video_needed_duration < last_video_duration:
+                                    # 裁剪最后一个视频
+                                    trimmed_last_video = os.path.join(temp_dir, f"trimmed_last_video_{i+1}.mp4")
+                                    
+                                    # 使用FFmpeg裁剪（不改变速度，只裁剪时长）
+                                    trim_cmd = [
+                                        self._get_ffmpeg_cmd(),
+                                        "-y",
+                                        "-i", last_video_path,
+                                        "-t", str(last_video_needed_duration),
+                                        "-c:v", "copy",  # 不重新编码视频
+                                        "-c:a", "copy",  # 不重新编码音频
+                                        trimmed_last_video
+                                    ]
+                                    
                                     try:
-                                        import win32api
-                                        audio_file = win32api.GetShortPathName(audio_file)
-                                        video_file = win32api.GetShortPathName(video_file)
+                                        logger.info(f"裁剪最后一个视频到 {last_video_needed_duration:.2f} 秒: {' '.join(trim_cmd)}")
+                                        subprocess.run(trim_cmd, check=True)
+                                        
+                                        # 在concat文件中使用裁剪后的视频
+                                        trimmed_path_escaped = trimmed_last_video.replace("'", "\\'")
+                                        concat_file.write(f"file '{trimmed_path_escaped}'\n")
                                     except Exception as e:
-                                        logger.warning(f"无法将路径转换为短路径: {str(e)}")
+                                        logger.warning(f"裁剪最后一个视频失败: {str(e)}，使用原始视频")
+                                        video_file_escaped = last_video_path.replace("'", "\\'")
+                                        concat_file.write(f"file '{video_file_escaped}'\n")
+                                else:
+                                    # 不需要裁剪，直接使用原始视频
+                                    video_file_escaped = last_video_path.replace("'", "\\'")
+                                    concat_file.write(f"file '{video_file_escaped}'\n")
+                        
+                        # 执行拼接，生成场景视频
+                        concat_cmd = [
+                            self._get_ffmpeg_cmd(),
+                            "-y",
+                            "-f", "concat",
+                            "-safe", "0",
+                            "-i", concat_file_path,
+                            "-c", "copy"  # 直接复制，不重新编码
+                        ]
+                        
+                        # 如果有音频，替换音频
+                        if scene_audio_file:
+                            # 先拼接视频到临时文件
+                            temp_video = os.path.join(temp_dir, f"temp_scene_{i+1}.mp4")
+                            concat_cmd.append(temp_video)
+                            
+                            try:
+                                logger.info(f"拼接视频: {' '.join(concat_cmd)}")
+                                subprocess.run(concat_cmd, check=True)
                                 
-                                # FFmpeg命令: 替换音频
+                                # 替换音频流
+                                audio_cmd = [
+                                    self._get_ffmpeg_cmd(),
+                                    "-y",
+                                    "-i", temp_video,  # 视频输入
+                                    "-i", scene_audio_file,  # 音频输入
+                                    "-map", "0:v:0",  # 使用第一个输入的视频流
+                                    "-map", "1:a:0",  # 使用第二个输入的音频流
+                                    "-c:v", "copy",  # 不重新编码视频
+                                    "-c:a", "aac",  # 音频转AAC格式（兼容性好）
+                                    "-t", str(scene_audio_duration),  # 限制输出时长
+                                    scene_output
+                                ]
+                                
+                                logger.info(f"替换音频: {' '.join(audio_cmd)}")
+                                subprocess.run(audio_cmd, check=True)
+                                
+                                # 添加到场景视频列表
+                                scene_videos.append(scene_output)
+                                logger.info(f"场景 {i+1} 处理完成")
+                            except Exception as e:
+                                logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                        else:
+                            # 没有音频，直接输出到场景视频文件
+                            concat_cmd.append(scene_output)
+                            
+                            try:
+                                logger.info(f"拼接视频: {' '.join(concat_cmd)}")
+                                subprocess.run(concat_cmd, check=True)
+                                
+                                # 添加到场景视频列表
+                                scene_videos.append(scene_output)
+                                logger.info(f"场景 {i+1} 处理完成")
+                            except Exception as e:
+                                logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                    else:
+                        logger.warning(f"场景 {i+1} 没有视频文件，跳过")
+                else:
+                    # 单视频模式 - 随机选择一个时长足够的视频
+                    logger.info(f"场景 {i+1} 使用单视频模式: 配音时长 {scene_audio_duration:.2f}秒")
+                    
+                    if scene_videos_list:
+                        # 过滤出时长大于等于音频时长的视频
+                        suitable_videos = [v for v in scene_videos_list if v.get("duration", 0) >= scene_audio_duration]
+                        
+                        # 如果没有足够长的视频，使用所有视频
+                        if not suitable_videos:
+                            logger.warning(f"场景 {i+1} 没有足够长的视频，使用所有视频")
+                            suitable_videos = scene_videos_list
+                        
+                        # 随机选择一个视频
+                        import random
+                        selected_video = random.choice(suitable_videos)
+                        video_file = selected_video["path"]
+                        video_duration = selected_video.get("duration", 0)
+                        
+                        logger.info(f"为场景 {i+1} 选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
+                        
+                        # 确保视频文件路径是字符串
+                        if not isinstance(video_file, str):
+                            video_file = str(video_file)
+                        
+                        # 处理视频 - 裁剪到配音时长
+                        try:
+                            # 如果有音频，同时处理视频和音频
+                            if scene_audio_file:
+                                cmd = [
+                                    self._get_ffmpeg_cmd(),
+                                    "-y",
+                                    "-i", video_file,  # 视频输入
+                                    "-i", scene_audio_file,  # 音频输入
+                                    "-map", "0:v:0",  # 使用第一个输入的视频流
+                                    "-map", "1:a:0",  # 使用第二个输入的音频流
+                                    "-c:v", "copy",  # 不重新编码视频
+                                    "-c:a", "aac",  # 音频转AAC格式
+                                    "-t", str(scene_audio_duration),  # 限制输出时长
+                                    scene_output
+                                ]
+                            else:
+                                # 没有音频，只处理视频
                                 cmd = [
                                     self._get_ffmpeg_cmd(),
                                     "-y",
                                     "-i", video_file,
-                                    "-i", audio_file,
-                                    "-c:v", "copy",
-                                    "-map", "0:v:0",
-                                    "-map", "1:a:0",
-                                    "-shortest",
+                                    "-t", str(scene_audio_duration),
+                                    "-c:v", "copy",  # 不重新编码视频
+                                    "-c:a", "copy",  # 不重新编码音频
                                     scene_output
                                 ]
-                                
-                                # 执行FFmpeg命令
-                                try:
-                                    logger.info(f"执行FFmpeg命令替换音频: {' '.join(cmd)}")
-                                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                    stdout, stderr = process.communicate()
-                                    
-                                    if process.returncode != 0:
-                                        logger.error(f"FFmpeg命令执行失败: {stderr.decode()}")
-                                        return None
-                                    
-                                    logger.info(f"场景 {i+1} 处理完成: {scene_output}")
-                                    scene_videos.append(scene_output)
-                                except Exception as e:
-                                    logger.error(f"执行FFmpeg命令失败: {str(e)}")
-                                    return None
-                            else:
-                                # 无音频时直接复制视频
-                                try:
-                                    import shutil
-                                    shutil.copy(video_file, scene_output)
-                                    logger.info(f"场景 {i+1} 处理完成(直接复制): {scene_output}")
-                                    scene_videos.append(scene_output)
-                                except Exception as e:
-                                    logger.error(f"复制视频文件失败: {str(e)}")
-                                    return None
-                        else:
-                            logger.warning(f"场景 {i+1} 没有视频文件，跳过")
-                else:
-                    # 没有音频文件，但按照工作原理，我们仍然要智能选择视频
-                    logger.info(f"场景 {i+1}/{len(scenes)} 没有找到音频文件，使用默认处理逻辑")
-                    
-                    # 使用默认的音频时长（可在设置中配置）
-                    default_audio_duration = self.settings.get("default_audio_duration", 10.0)
-                    logger.info(f"使用默认音频时长: {default_audio_duration}秒")
-                    
-                    # 确定是使用单视频模式还是多视频混剪模式
-                    if default_audio_duration <= 15:  # 假设15秒以下使用单视频模式
-                        # 单视频模式 - 随机选择一个时长足够的视频
-                        if scene_videos_list:
-                            # 过滤出时长大于等于默认音频时长的视频
-                            suitable_videos = [v for v in scene_videos_list if v.get("duration", 0) >= default_audio_duration]
                             
-                            if suitable_videos:
-                                # 随机选择一个合适的视频
-                                import random
-                                selected_video = random.choice(suitable_videos)
-                                video_file = selected_video["path"]
-                                logger.info(f"从 {len(suitable_videos)} 个合适视频中随机选择: {os.path.basename(video_file)}")
-                                
-                                # 裁剪视频到指定时长
-                                try:
-                                    # 确保路径是字符串
-                                    if not isinstance(video_file, str):
-                                        video_file = str(video_file)
-                                        
-                                    # 在Windows上使用短路径
-                                    if os.name == 'nt':
-                                        try:
-                                            import win32api
-                                            video_file = win32api.GetShortPathName(video_file)
-                                        except Exception as e:
-                                            logger.warning(f"无法将视频路径转换为短路径: {str(e)}")
-                                
-                                    # FFmpeg命令: 裁剪视频
-                                    cmd = [
-                                        self._get_ffmpeg_cmd(),
-                                        "-y",
-                                        "-i", video_file,
-                                        "-t", str(default_audio_duration),
-                                        "-c:v", "copy",  # 不重新编码
-                                        "-c:a", "copy",
-                                        scene_output
-                                    ]
-                                    
-                                    # 执行FFmpeg命令
-                                    logger.info(f"执行FFmpeg命令裁剪视频: {' '.join(cmd)}")
-                                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                    stdout, stderr = process.communicate()
-                                    
-                                    if process.returncode == 0:
-                                        logger.info(f"场景 {i+1} 处理完成(裁剪视频): {scene_output}")
-                                        scene_videos.append(scene_output)
-                                    else:
-                                        logger.error(f"FFmpeg命令执行失败: {stderr.decode()}")
-                                        # 回退到复制原视频
-                                        import shutil
-                                        shutil.copy(video_file, scene_output)
-                                        logger.info(f"场景 {i+1} 处理完成(直接复制): {scene_output}")
-                                        scene_videos.append(scene_output)
-                                except Exception as e:
-                                    logger.error(f"处理视频失败: {str(e)}")
-                                    # 回退到复制原视频
-                                    import shutil
-                                    shutil.copy(video_file, scene_output)
-                                    logger.info(f"场景 {i+1} 处理完成(直接复制): {scene_output}")
-                                    scene_videos.append(scene_output)
-                            else:
-                                # 没有找到足够长的视频，随机选择并循环
-                                if scene_videos_list:
-                                    # 随机选择一个视频
-                                    import random
-                                    selected_video = random.choice(scene_videos_list)
-                                    video_file = selected_video["path"]
-                                    
-                                    # 直接复制视频（后续可以添加循环逻辑）
-                                    import shutil
-                                    shutil.copy(video_file, scene_output)
-                                    logger.info(f"场景 {i+1} 处理完成(直接复制): {scene_output}")
-                                    scene_videos.append(scene_output)
-                                else:
-                                    logger.warning(f"场景 {i+1} 没有视频文件，跳过")
-                        else:
-                            logger.warning(f"场景 {i+1} 没有视频文件，跳过")
-                    else:
-                        # 多视频混剪模式 - 随机选择多个视频拼接
-                        if scene_videos_list:
-                            # 创建场景的concat文件
-                            concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
-                            scene_concat_files.append(concat_file_path)
+                            logger.info(f"处理视频: {' '.join(cmd)}")
+                            subprocess.run(cmd, check=True)
                             
-                            # 随机选择视频直到总时长超过默认音频时长
-                            import random
-                            selected_videos = []
-                            total_video_duration = 0
-                            
-                            # 打乱视频列表
-                            shuffled_videos = list(scene_videos_list)
-                            random.shuffle(shuffled_videos)
-                            
-                            for video in shuffled_videos:
-                                selected_videos.append(video)
-                                total_video_duration += video.get("duration", 0)
-                                if total_video_duration >= default_audio_duration:
-                                    break
-                            
-                            logger.info(f"为场景 {i+1} 选择了 {len(selected_videos)} 个视频，总时长 {total_video_duration:.2f}秒")
-                            
-                            # 创建concat文件
-                            with open(concat_file_path, 'w', encoding='utf-8') as concat_file:
-                                for video in selected_videos:
-                                    video_file = video["path"]
-                                    # 确保路径是字符串
-                                    if not isinstance(video_file, str):
-                                        video_file = str(video_file)
-                                    # 处理路径中的单引号，避免ffmpeg命令出错
-                                    video_file_escaped = video_file.replace("'", "\\'")
-                                    concat_file.write(f"file '{video_file_escaped}'\n")
-                            
-                            # 使用FFmpeg命令合并视频文件
-                            cmd = [
-                                self._get_ffmpeg_cmd(),
-                                "-y",
-                                "-f", "concat",
-                                "-safe", "0",
-                                "-i", concat_file_path,
-                                "-t", str(default_audio_duration),  # 限制输出时长
-                                "-c", "copy",
-                                scene_output
-                            ]
-                            
-                            # 执行FFmpeg命令
-                            try:
-                                logger.info(f"执行FFmpeg命令拼接视频: {' '.join(cmd)}")
-                                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                stdout, stderr = process.communicate()
-                                
-                                if process.returncode == 0:
-                                    logger.info(f"场景 {i+1} 处理完成: {scene_output}")
-                                    scene_videos.append(scene_output)
-                                else:
-                                    logger.error(f"FFmpeg命令执行失败: {stderr.decode()}")
-                                    # 回退到使用第一个视频
-                                    if selected_videos:
-                                        video_file = selected_videos[0]["path"]
-                                        import shutil
-                                        shutil.copy(video_file, scene_output)
-                                        logger.info(f"场景 {i+1} 处理完成(直接复制): {scene_output}")
-                                        scene_videos.append(scene_output)
-                            except Exception as e:
-                                logger.error(f"执行FFmpeg命令失败: {str(e)}")
-                                # 回退到使用第一个视频
-                                if selected_videos:
-                                    video_file = selected_videos[0]["path"]
-                                    import shutil
-                                    shutil.copy(video_file, scene_output)
-                                    logger.info(f"场景 {i+1} 处理完成(直接复制): {scene_output}")
-                                    scene_videos.append(scene_output)
-                        else:
-                            logger.warning(f"场景 {i+1} 没有视频文件，跳过")
-            
-            # 阶段3: 最终合并阶段 - 合并所有场景视频
-            if scene_videos:
-                # 创建最终concat文件
-                final_concat_file = os.path.join(concat_dir, "final_concat.txt")
-                
-                with open(final_concat_file, 'w', encoding='utf-8') as f:
-                    for scene_video in scene_videos:
-                        # 确保路径是字符串并转换为绝对路径
-                        if not isinstance(scene_video, str):
-                            scene_video = str(scene_video)
-                        
-                        # 确保使用绝对路径
-                        scene_video = os.path.abspath(scene_video)
-                        
-                        # 处理路径中的单引号，避免ffmpeg命令出错
-                        scene_video_escaped = scene_video.replace("'", "\\'")
-                        f.write(f"file '{scene_video_escaped}'\n")
-                
-                # 创建临时输出文件 (无背景音乐)
-                temp_output_path = os.path.join(temp_dir, f"temp_final{os.path.splitext(output_path)[1]}")
-                
-                # 添加背景音乐（如果提供）
-                if bgm_path and os.path.exists(bgm_path):
-                    logger.info(f"添加背景音乐: {bgm_path}")
-                    
-                    # 确保路径是字符串
-                    if not isinstance(bgm_path, str):
-                        bgm_path = str(bgm_path)
-                        
-                    # 标准化路径格式
-                    bgm_path = os.path.normpath(bgm_path)
-                    
-                    # 在Windows上使用短路径
-                    if os.name == 'nt':
-                        try:
-                            import win32api
-                            bgm_path = win32api.GetShortPathName(bgm_path)
+                            # 添加到场景视频列表
+                            scene_videos.append(scene_output)
+                            logger.info(f"场景 {i+1} 处理完成")
                         except Exception as e:
-                            logger.warning(f"无法将背景音乐路径转换为短路径: {str(e)}")
+                            logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                    else:
+                        logger.warning(f"场景 {i+1} 没有视频文件，跳过")
+            
+            # 没有处理好的场景视频，提前返回
+            if not scene_videos:
+                logger.error("没有生成任何场景视频，处理终止")
+                return None
+            
+            # 阶段3: 最终合并阶段 - 拼接所有场景视频
+            logger.info(f"开始合并 {len(scene_videos)} 个场景视频...")
+            
+            # 创建最终concat文件
+            final_concat_file = os.path.join(concat_dir, "final_concat.txt")
+            
+            with open(final_concat_file, 'w', encoding='utf-8') as f:
+                for scene_video in scene_videos:
+                    # 确保路径是字符串
+                    if not isinstance(scene_video, str):
+                        scene_video = str(scene_video)
                     
-                    # 先合并所有视频到临时文件
-                    concat_cmd = [
-                        self._get_ffmpeg_cmd(),
-                        "-y",
-                        "-f", "concat",
-                        "-safe", "0",
-                        "-i", final_concat_file,
-                        "-c", "copy",
-                        temp_output_path
+                    # 处理路径中的单引号
+                    scene_video_escaped = scene_video.replace("'", "\\'")
+                    f.write(f"file '{scene_video_escaped}'\n")
+            
+            # 合并视频 - 使用concat demuxer，不重新编码
+            merge_cmd = [
+                self._get_ffmpeg_cmd(),
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", final_concat_file,
+                "-c", "copy"  # 不重新编码，直接复制
+            ]
+            
+            # 处理背景音乐
+            if bgm_path and os.path.exists(bgm_path):
+                logger.info(f"添加背景音乐: {bgm_path}")
+                
+                # 确保背景音乐路径是字符串
+                if not isinstance(bgm_path, str):
+                    bgm_path = str(bgm_path)
+                
+                # 先合并视频到临时文件
+                temp_merged_video = os.path.join(temp_dir, "temp_merged.mp4")
+                merge_cmd.append(temp_merged_video)
+                
+                try:
+                    logger.info(f"合并视频: {' '.join(merge_cmd)}")
+                    subprocess.run(merge_cmd, check=True)
+                    
+                    # 获取合并后视频的时长
+                    video_duration_cmd = [
+                        self._get_ffmpeg_cmd().replace("ffmpeg", "ffprobe"),
+                        "-v", "error",
+                        "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1",
+                        temp_merged_video
                     ]
                     
-                    # 执行FFmpeg命令合并视频
-                    try:
-                        logger.info(f"执行FFmpeg命令合并场景视频: {' '.join(concat_cmd)}")
-                        process = subprocess.Popen(concat_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        stdout, stderr = process.communicate()
-                        
-                        if process.returncode != 0:
-                            logger.error(f"合并视频失败: {stderr.decode()}")
-                            return None
-                        
-                        # 然后添加背景音乐
-                        bgm_cmd = [
-                            self._get_ffmpeg_cmd(),
-                            "-y",
-                            "-i", temp_output_path,
-                            "-i", bgm_path,
-                            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2",
-                            "-c:v", "copy",
-                            output_path
-                        ]
-                        
-                        logger.info(f"执行FFmpeg命令添加背景音乐: {' '.join(bgm_cmd)}")
-                        process = subprocess.Popen(bgm_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        stdout, stderr = process.communicate()
-                        
-                        if process.returncode != 0:
-                            logger.error(f"添加背景音乐失败: {stderr.decode()}")
-                            # 使用无背景音乐版本
-                            import shutil
-                            shutil.copy(temp_output_path, output_path)
-                    except Exception as e:
-                        logger.error(f"合并视频或添加背景音乐失败: {str(e)}")
-                        return None
-                else:
-                    # 无背景音乐时直接合并视频
-                    cmd = [
+                    result = subprocess.run(video_duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    merged_duration = float(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else 0
+                    
+                    # 添加背景音乐 - 使用音量混合，不改变视频编码
+                    bgm_cmd = [
                         self._get_ffmpeg_cmd(),
                         "-y",
-                        "-f", "concat",
-                        "-safe", "0",
-                        "-i", final_concat_file,
-                        "-c", "copy",
+                        "-i", temp_merged_video,
+                        "-i", bgm_path,
+                        "-filter_complex", f"[1:a]volume={self.settings.get('bgm_volume', 0.3)}[bgm];[0:a][bgm]amix=inputs=2:duration=first[a]",
+                        "-map", "0:v",
+                        "-map", "[a]",
+                        "-c:v", "copy",  # 不重新编码视频
+                        "-t", str(merged_duration),  # 限制输出时长
                         output_path
                     ]
                     
-                    # 执行FFmpeg命令
+                    logger.info(f"添加背景音乐: {' '.join(bgm_cmd)}")
+                    subprocess.run(bgm_cmd, check=True)
+                except Exception as e:
+                    logger.error(f"添加背景音乐失败: {str(e)}")
+                    # 如果背景音乐处理失败，尝试使用原始合并视频
                     try:
-                        logger.info(f"执行FFmpeg命令合并最终视频: {' '.join(cmd)}")
-                        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        stdout, stderr = process.communicate()
-                        
-                        if process.returncode != 0:
-                            logger.error(f"FFmpeg命令执行失败: {stderr.decode()}")
-                            return None
-                    except Exception as e:
-                        logger.error(f"执行FFmpeg命令失败: {str(e)}")
+                        import shutil
+                        shutil.copy(temp_merged_video, output_path)
+                        logger.info(f"复制合并后的视频: {temp_merged_video} -> {output_path}")
+                    except Exception as copy_e:
+                        logger.error(f"复制视频失败: {str(copy_e)}")
                         return None
+            else:
+                # 没有背景音乐，直接输出
+                merge_cmd.append(output_path)
                 
-                logger.info(f"最终视频处理完成: {output_path}")
-                
-                # 验证输出文件是否有效
-                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    return output_path
-                else:
-                    logger.error(f"输出文件不存在或大小为0: {output_path}")
+                try:
+                    logger.info(f"合并视频: {' '.join(merge_cmd)}")
+                    subprocess.run(merge_cmd, check=True)
+                except Exception as e:
+                    logger.error(f"合并视频失败: {str(e)}")
                     return None
-        
+            
+            # 验证输出文件
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                logger.info(f"成功生成视频: {output_path}")
+                return output_path
+            else:
+                logger.error(f"输出文件无效: {output_path}")
+                return None
+                
         except Exception as e:
-            logger.error(f"处理视频时发生错误: {str(e)}")
+            logger.error(f"处理视频时出错: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return None
-            
+        
         finally:
             # 清理临时文件
             if self.settings.get("clean_temp_files", True):
@@ -1857,9 +1750,10 @@ class VideoProcessor:
                     logger.info(f"清理临时文件: {temp_dir}")
                     shutil.rmtree(temp_dir, ignore_errors=True)
                 except Exception as e:
-                    logger.warning(f"清理临时文件时出错: {str(e)}")
-        
-        return None  # 如果执行到这里，说明处理失败
+                    logger.warning(f"清理临时文件失败: {str(e)}")
+            
+            # 释放内存
+            gc.collect()
 
     def _get_ffmpeg_cmd(self):
         """
