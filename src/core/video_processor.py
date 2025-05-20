@@ -95,7 +95,7 @@ class VideoProcessor:
         
         # 默认设置
         self.default_settings = {
-            "hardware_accel": "auto",  # 硬件加速：auto, cuda, qsv, amf, none
+            "hardware_accel": "auto",  # 硬件加速: auto, cuda, qsv, amf, none
             "encoder": "libx264",       # 视频编码器
             "resolution": "1080p",      # 输出分辨率
             "bitrate": 5000,            # 比特率(kbps)
@@ -243,7 +243,7 @@ class VideoProcessor:
         
         Args:
             message: 状态消息
-            percent: 进度百分比 (0-100)
+            percent: 进度百分比(0-100)
         """
         if self.progress_callback:
             try:
@@ -253,9 +253,9 @@ class VideoProcessor:
                     elapsed_str = self._format_time(elapsed_time)
                     # 如果有设置合成总数，显示已合成数量
                     if self._total_videos > 0:
-                        message = f"{message} (已用时: {elapsed_str}, 已合成: {self._completed_videos}/{self._total_videos})"
+                        message = f"{message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
                     else:
-                        message = f"{message} (已用时: {elapsed_str})"
+                        message = f"{message} (已用时间: {elapsed_str})"
                 
                 # 保存最后一次进度信息，用于定时器重发
                 self._last_progress_message = message
@@ -283,29 +283,29 @@ class VideoProcessor:
         return (self._last_progress_message, self._last_progress_percent)
     
     def _start_progress_timer(self):
-        """启动定期进度更新定时器，防止批处理模式中的超时检测"""
+        """启动定期进度更新定时器，防止批处理模式中的超时检查"""
         if self._progress_timer is not None:
             return  # 已有定时器在运行
             
         def _timer_func():
             while not self.stop_requested:
                 try:
-                    # 每15秒重发一次最后的进度信息
+                    # 每5秒重发一次最后的进度信息
                     if self._last_progress_message and self.progress_callback:
                         # 重新添加时间信息
                         if self.start_time > 0:
                             elapsed_time = time.time() - self.start_time
                             elapsed_str = self._format_time(elapsed_time)
-                            base_message = self._last_progress_message.split('(已用时:')[0].strip()
+                            base_message = self._last_progress_message.split('(已用时间')[0].strip()
                             # 如果有设置合成总数，显示已合成数量
                             if self._total_videos > 0:
-                                message = f"{base_message} (已用时: {elapsed_str}, 已合成: {self._completed_videos}/{self._total_videos})"
+                                message = f"{base_message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
                             else:
-                                message = f"{base_message} (已用时: {elapsed_str})"
+                                message = f"{base_message} (已用时间: {elapsed_str})"
                             self.progress_callback(message, self._last_progress_percent)
                             logger.debug(f"定时重发进度: {self._last_progress_percent:.1f}%: {message}")
                 except Exception as e:
-                    logger.error(f"进度定时器错误: {str(e)}")
+                    logger.error(f"进度定时器出错: {str(e)}")
                 
                 # 睡眠15秒
                 time.sleep(15)
@@ -351,8 +351,8 @@ class VideoProcessor:
         output_videos = []
         
         try:
-            # 扫描素材文件夹
-            self.report_progress("扫描素材文件夹...", 1)
+            # 扫描素材文件...
+            self.report_progress("扫描素材文件...", 1)
             
             # 优化：使用轻量级扫描，只获取文件路径，不读取元数据
             material_data = self._scan_material_folders(material_folders)
@@ -411,11 +411,11 @@ class VideoProcessor:
             total_time = batch_end_time - batch_start_time
             formatted_time = self._format_time(total_time)
             
-            # 记录成功率
+            # 记录成功情况
             success_rate = (len(output_videos) / count) * 100 if count > 0 else 0
             logger.info(f"批量处理完成，成功率: {success_rate:.1f}%, 总用时: {formatted_time}")
             
-            self.report_progress(f"批量处理完成，成功生成 {len(output_videos)}/{count} 个视频", 100)
+            self.report_progress(f"批量处理完成，成功生成{len(output_videos)}/{count} 个视频", 100)
             
             return output_videos, formatted_time
             
@@ -444,7 +444,7 @@ class VideoProcessor:
         
         Args:
             material_folders: 素材文件夹列表
-            extract_mode: 提取模式，'single_video'或'multi_video'
+            extract_mode: 提取模式'single_video'或'multi_video'
             
         Returns:
             Dict: 包含每个文件夹的视频和音频信息的字典
@@ -456,8 +456,8 @@ class VideoProcessor:
         os.makedirs(cache_dir, exist_ok=True)
         
         result = {}
-        video_cache = {}  # 缓存已经处理过的视频文件夹
-        audio_cache = {}  # 缓存已经处理过的音频文件夹
+        video_cache = {}  # 缓存已经处理过的视频文件
+        audio_cache = {}  # 缓存已经处理过的音频文件
         
         for i, folder_item in enumerate(material_folders):
             # 确定文件夹路径和名称
@@ -479,12 +479,12 @@ class VideoProcessor:
                 continue
                 
             # 更新进度
-            progress_message = f"正在扫描素材文件夹 {i+1}/{len(material_folders)}: {folder_name}"
+            progress_message = f"正在扫描素材文件夹{i+1}/{len(material_folders)}: {folder_name}"
             if extract_mode == "multi_video":
                 progress_message += " [多视频拼接]"
             self.report_progress(progress_message, (i / len(material_folders)) * 100)
             
-            logger.info(f"多视频模式: 直接处理文件夹 {folder_path}")
+            logger.info(f"多视频模式 直接处理文件夹: {folder_path}")
             
             # 检查是否有缓存
             folder_cache_key = folder_path.replace("\\", "_").replace("/", "_").replace(":", "_")
@@ -502,11 +502,11 @@ class VideoProcessor:
                     with open(videos_cache_path, 'r', encoding='utf-8') as f:
                         videos = json.load(f)
                     video_cache[folder_path] = videos
-                    logger.info(f"已从缓存加载 {folder_path} 的视频信息: {len(videos)} 个视频")
+                    logger.info(f"已从缓存加载 {folder_path} 的视频信息 {len(videos)} 个视频")
                 except Exception as e:
                     logger.warning(f"加载视频缓存失败: {str(e)}")
             
-            # 如果没有有效的缓存，扫描视频文件夹
+            # 如果没有有效的缓存，扫描视频文件
             if not videos:
                 video_folder = os.path.join(folder_path, "视频")
                 videos = self._scan_media_folder(folder_path, "视频")
@@ -524,7 +524,7 @@ class VideoProcessor:
                     with open(videos_cache_path, 'w', encoding='utf-8') as f:
                         json.dump(videos_json, f, ensure_ascii=False, indent=2)
                     video_cache[folder_path] = videos
-                    logger.info(f"已保存 {folder_path} 的视频信息缓存: {len(videos)} 个视频")
+                    logger.info(f"已保存{folder_path} 的视频信息缓存 {len(videos)} 个视频")
                 except Exception as e:
                     logger.error(f"保存视频信息缓存失败: {str(e)}")
             
@@ -536,7 +536,7 @@ class VideoProcessor:
                     with open(audios_cache_path, 'r', encoding='utf-8') as f:
                         audios = json.load(f)
                     audio_cache[folder_path] = audios
-                    logger.info(f"已从缓存加载 {folder_path} 的音频信息: {len(audios)} 个音频")
+                    logger.info(f"已从缓存加载 {folder_path} 的音频信息 {len(audios)} 个音频")
                 except Exception as e:
                     logger.warning(f"加载音频缓存失败: {str(e)}")
             
@@ -565,7 +565,7 @@ class VideoProcessor:
                     with open(audios_cache_path, 'w', encoding='utf-8') as f:
                         json.dump(audios_json, f, ensure_ascii=False, indent=2)
                     audio_cache[folder_path] = audios
-                    logger.info(f"已保存 {folder_path} 的音频信息缓存: {len(audios)} 个音频")
+                    logger.info(f"已保存{folder_path} 的音频信息缓存 {len(audios)} 个音频")
                 except Exception as e:
                     logger.error(f"保存音频信息缓存失败: {str(e)}")
             
@@ -580,7 +580,7 @@ class VideoProcessor:
             
             # 更新进度
             self.report_progress(
-                f"已扫描 {i+1}/{len(material_folders)} 个文件夹",
+                f"已扫描{i+1}/{len(material_folders)} 个文件夹",
                 ((i + 1) / len(material_folders)) * 100
             )
         
@@ -592,7 +592,7 @@ class VideoProcessor:
         
         # 检查是否有有效的素材
         valid_scenes = sum(1 for folder_data in result.values() if folder_data.get("videos"))
-        logger.info(f"素材扫描完成，找到 {valid_scenes} 个有效场景（含视频文件）")
+        logger.info(f"素材扫描完成，找到{valid_scenes} 个有效场景（含视频文件）")
         
         if not result:
             logger.warning("没有找到有效的素材文件夹")
@@ -631,7 +631,7 @@ class VideoProcessor:
             
             # 再次检查文件是否存在
             if not os.path.exists(audio_path):
-                self.logger.warning(f"无法找到音频文件，尝试的所有扩展名均失败: {audio_path}")
+                self.logger.warning(f"无法找到音频文件，尝试的所有扩展名均失效: {audio_path}")
                 return None
             
             # 使用FFprobe获取音频时长
@@ -676,7 +676,7 @@ class VideoProcessor:
             if duration is None:
                 default_duration = self.settings.get('default_audio_duration', 5.0)
                 duration = default_duration
-                self.logger.warning(f"无法获取音频时长，使用默认时长 {duration} 秒: {audio_path}")
+                self.logger.warning(f"无法获取音频时长，使用默认时长{duration} 秒 {audio_path}")
             
             # 返回基本音频信息
             audio_info = {
@@ -717,7 +717,7 @@ class VideoProcessor:
                     "audios": audio_info_list
                 }, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"已保存 {len(audio_info_list)} 个音频信息到缓存文件: {cache_file}")
+            logger.info(f"已保存{len(audio_info_list)} 个音频信息到缓存文件: {cache_file}")
         except Exception as e:
             logger.error(f"保存音频信息缓存失败: {str(e)}")
 
@@ -732,10 +732,10 @@ class VideoProcessor:
             list: 音频信息列表，如果缓存不存在或已过期则返回None
         """
         try:
-            # 创建缓存目录
+            # 确保缓存目录存在
             cache_dir = os.path.join(self.settings["temp_dir"], "audio_cache")
             
-            # 生成缓存文件名
+            # 生成缓存文件名（基于文件夹路径的哈希值）
             import hashlib
             folder_hash = hashlib.md5(folder_path.encode()).hexdigest()
             cache_file = os.path.join(cache_dir, f"audio_info_{folder_hash}.json")
@@ -744,7 +744,7 @@ class VideoProcessor:
             if not os.path.exists(cache_file):
                 return None
             
-            # 读取缓存文件
+            # 读取缓存数据
             with open(cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
             
@@ -754,16 +754,12 @@ class VideoProcessor:
                 logger.info(f"音频缓存已过期: {cache_file}")
                 return None
             
-            # 检查文件夹路径是否匹配
-            if cache_data.get("folder_path") != folder_path:
-                logger.warning(f"音频缓存文件夹路径不匹配: {cache_data.get('folder_path')} != {folder_path}")
-                return None
-            
+            # 验证路径是否存在
             audios = cache_data.get("audios", [])
-            logger.info(f"已从缓存加载 {len(audios)} 个音频信息: {cache_file}")
+            logger.info(f"已从缓存加载 {len(audios)} 个音频信息 {cache_file}")
             return audios
         except Exception as e:
-            logger.error(f"加载音频信息缓存失败: {str(e)}")
+            logger.warning(f"加载音频信息缓存失败: {str(e)}")
             return None
 
     def _scan_media_folder(self, folder_path, folder_type, target_folder_name=None):
@@ -772,7 +768,7 @@ class VideoProcessor:
         
         Args:
             folder_path (str): 父文件夹路径
-            folder_type (str): 文件夹类型，"视频" 或 "配音"
+            folder_type (str): 文件夹类型，"视频"或"配音"
             target_folder_name (str, optional): 目标子文件夹名称，默认None使用folder_type
             
         Returns:
@@ -830,13 +826,13 @@ class VideoProcessor:
                             self.logger.warning(f"处理音频文件失败: {file_path}, 错误: {str(e)}")
                 
                 if result:
-                    self.logger.info(f"在文件夹 {target_folder} 中找到 {len(result)} 个{folder_type}文件")
+                    self.logger.info(f"在文件夹 {target_folder} 中找到{len(result)} 个{folder_type}文件")
                 else:
                     self.logger.warning(f"在文件夹 {target_folder} 中未找到有效的{folder_type}文件")
                 
                 return result
             except Exception as e:
-                self.logger.warning(f"扫描文件夹 {target_folder} 失败: {str(e)}")
+                self.logger.warning(f"扫描文件夹失败: {str(e)}")
         
         # 如果直接访问失败，尝试查找快捷方式
         shortcut_pattern = f"{target_folder_name}*.lnk"
@@ -853,11 +849,11 @@ class VideoProcessor:
                     # 递归调用扫描解析后的目标路径
                     return self._scan_media_folder(target_path, folder_type, "")
                 else:
-                    self.logger.warning(f"快捷方式目标不是文件夹: {target_path}")
+                    self.logger.warning(f"快捷方式目标不是文件: {target_path}")
             except Exception as e:
-                self.logger.warning(f"解析快捷方式 {shortcut_path} 失败: {str(e)}")
+                self.logger.warning(f"解析快捷方式失败: {shortcut_path}, 错误: {str(e)}")
         
-        # 如果所有尝试都失败，尝试搜索类似名称的文件夹
+        # 如果所有尝试都失败，尝试搜索类似名称的文件
         similar_folders = [
             d for d in os.listdir(folder_path) 
             if os.path.isdir(os.path.join(folder_path, d)) and 
@@ -865,12 +861,12 @@ class VideoProcessor:
         ]
         
         if similar_folders:
-            similar_folder = similar_folders[0]  # 使用第一个相似的文件夹
+            similar_folder = similar_folders[0]  # 使用第一个相似的文件
             self.logger.info(f"使用相似名称的文件夹: {similar_folder} 代替 {target_folder_name}")
             return self._scan_media_folder(os.path.join(folder_path, similar_folder), folder_type, "")
         
         # 如果无法找到相关文件夹，返回空列表
-        self.logger.warning(f"找不到有效的{folder_type}文件夹: {target_folder}")
+        self.logger.warning(f"找不到有效的{folder_type}文件: {target_folder}")
         return result
 
     def _save_video_info_cache(self, folder_path, video_info_list):
@@ -899,7 +895,7 @@ class VideoProcessor:
                     "videos": video_info_list
                 }, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"已保存 {len(video_info_list)} 个视频信息到缓存文件: {cache_file}")
+            logger.info(f"已保存{len(video_info_list)} 个视频信息到缓存文件: {cache_file}")
         except Exception as e:
             logger.error(f"保存视频信息缓存失败: {str(e)}")
 
@@ -917,7 +913,7 @@ class VideoProcessor:
             # 创建缓存目录
             cache_dir = os.path.join(self.settings["temp_dir"], "video_cache")
             
-            # 生成缓存文件名
+            # 生成缓存文件名（基于文件夹路径的哈希值）
             import hashlib
             folder_hash = hashlib.md5(folder_path.encode()).hexdigest()
             cache_file = os.path.join(cache_dir, f"video_info_{folder_hash}.json")
@@ -942,7 +938,7 @@ class VideoProcessor:
                 return None
             
             videos = cache_data.get("videos", [])
-            logger.info(f"已从缓存加载 {len(videos)} 个视频信息: {cache_file}")
+            logger.info(f"已从缓存加载 {len(videos)} 个视频信息 {cache_file}")
             return videos
         except Exception as e:
             logger.error(f"加载视频信息缓存失败: {str(e)}")
@@ -954,7 +950,7 @@ class VideoProcessor:
         
         Args:
             folder_path (str): 要扫描的文件夹路径
-            folder_type (str): "视频" 或 "配音"
+            folder_type (str): "视频"或"配音"
             max_depth (int, optional): 最大递归深度
             _current_depth (int, optional): 当前递归深度，内部使用
             
@@ -987,7 +983,7 @@ class VideoProcessor:
             extensions = ['.mp3', '.MP3', '.wav', '.WAV', '.aac', '.AAC', '.m4a', '.M4A', '.ogg', '.OGG']
             
         try:
-            # 使用os.scandir高效遍历文件夹
+            # 使用os.scandir高效遍历文件
             for entry in os.scandir(folder_path):
                 try:
                     # 处理快捷方式文件
@@ -1035,7 +1031,7 @@ class VideoProcessor:
         # 确保所有路径都是字符串
         media_files = [str(file_path) for file_path in media_files]
         
-        self.logger.info(f"在文件夹 {folder_path} 中找到 {len(media_files)} 个{folder_type}文件")
+        self.logger.info(f"在文件夹 {folder_path} 中找到{len(media_files)} 个{folder_type}文件")
         return media_files
 
     def _get_video_duration_fast(self, video_path):
@@ -1111,7 +1107,7 @@ class VideoProcessor:
 
     def _process_folder_shortcuts(self, parent_folder, folder_type, max_depth=3):
         """
-        处理文件夹中的快捷方式，查找特定类型的子文件夹
+        处理文件夹中的快捷方式，查找特定类型的子文件
         
         Args:
             parent_folder: 父文件夹路径
@@ -1123,7 +1119,7 @@ class VideoProcessor:
         """
         from src.utils.file_utils import resolve_shortcut
         
-        logger.debug(f"在 {parent_folder} 中查找 {folder_type} 文件夹")
+        logger.debug(f"在{parent_folder}中查找{folder_type}文件...")
         
         # 检查父文件夹是否存在
         if not os.path.exists(parent_folder):
@@ -1135,9 +1131,9 @@ class VideoProcessor:
             folder_type,
             folder_type.lower(),
             folder_type.upper(),
-            f"{folder_type}_文件夹",
-            f"{folder_type.lower()}_文件夹",
-            f"{folder_type.upper()}_文件夹"
+            f"{folder_type}_文件",
+            f"{folder_type.lower()}_文件",
+            f"{folder_type.upper()}_文件"
         ]
         
         # 英文名称映射
@@ -1153,7 +1149,7 @@ class VideoProcessor:
         # 找到的文件夹列表
         found_folders = []
         
-        # 首先检查直接子文件夹
+        # 首先检查直接子文件
         try:
             for item in os.listdir(parent_folder):
                 item_path = os.path.join(parent_folder, item)
@@ -1181,19 +1177,19 @@ class VideoProcessor:
         
         # 如果找到了文件夹，返回结果
         if found_folders:
-            logger.info(f"在 {parent_folder} 中找到 {len(found_folders)} 个 {folder_type} 文件夹")
+            logger.info(f"在{parent_folder}中找到{len(found_folders)}个{folder_type}文件")
             return found_folders
         
         # 如果没有找到，尝试在父文件夹中查找
         if max_depth > 0:
-            logger.debug(f"在 {parent_folder} 中未找到 {folder_type} 文件夹，尝试在父目录中查找")
+            logger.debug(f"在{parent_folder}中未找到{folder_type}文件夹，尝试在父目录中查找")
             parent_dir = os.path.dirname(parent_folder)
             if parent_dir and parent_dir != parent_folder:
                 parent_folders = self._process_folder_shortcuts(parent_dir, folder_type, max_depth - 1)
                 if parent_folders:
                     return parent_folders
         
-        logger.debug(f"未找到任何 {folder_type} 文件夹")
+        logger.debug(f"未找到任何{folder_type}文件")
         return []
 
     def _get_audio_metadata(self, audio_path):
@@ -1285,13 +1281,13 @@ class VideoProcessor:
                              progress_start: float = 0,
                              progress_end: float = 100) -> str:
         """
-        处理单个视频，按照工作原理文档实现:
+        处理单个视频，按照工作原理文档实现
         1. 分场景选择视频（单视频或多视频模式由用户设置决定）
         2. 根据配音时长裁剪视频（不变速）
         3. 将场景视频按顺序拼接
         
         Args:
-            material_data: 素材数据字典，包含每个场景的视频和音频文件
+            material_data: 素材数据字典，包含每个场景的视频和音频信息
             output_path: 输出视频路径
             bgm_path: 背景音乐路径，可为None
             progress_start: 进度起始百分比
@@ -1300,7 +1296,7 @@ class VideoProcessor:
         Returns:
             str: 处理后的视频路径，失败时返回None
         """
-        logger.info(f"开始处理单个视频: {output_path}")
+        logger.info(f"开始处理单个视频 {output_path}")
 
         # 处理输出路径 - 在Windows上使用短路径格式以避免Unicode问题
         if os.name == 'nt':
@@ -1362,7 +1358,7 @@ class VideoProcessor:
                         
                             if audios:
                                 material_data[folder_key]["audios"] = audios
-                                logger.info(f"为场景 {folder_key} 找到 {len(audios)} 个音频文件")
+                                logger.info(f"为场景{folder_key} 找到 {len(audios)} 个音频文件")
             
             for folder_key, folder_data in material_data.items():
                 if not folder_data.get("videos"):
@@ -1383,7 +1379,7 @@ class VideoProcessor:
                     
             # 没有有效场景，提前返回
             if not scenes:
-                logger.error("没有找到有效场景，处理终止")
+                logger.error("没有找到有效场景，处理结束")
                 return None
                 
             # 创建拼接文件目录
@@ -1429,7 +1425,7 @@ class VideoProcessor:
                 # 根据模式处理视频
                 if use_multi_video:
                     # 多视频模式 - 随机选择多个视频直到总时长超过配音时长
-                    logger.info(f"场景 {i+1} 使用多视频混剪模式: 配音时长 {scene_audio_duration:.2f}秒")
+                    logger.info(f"场景 {i+1} 使用多视频混剪模式 配音时长 {scene_audio_duration:.2f}秒")
                     if scene_videos_list:
                         # 随机打乱视频列表
                         import random
@@ -1451,7 +1447,7 @@ class VideoProcessor:
                             logger.warning(f"场景 {i+1} 没有找到足够的视频，跳过")
                             continue
                         
-                        logger.info(f"为场景 {i+1} 选择了 {len(selected_videos)} 个视频，总时长 {total_video_duration:.2f}秒")
+                        logger.info(f"为场景{i+1} 选择{len(selected_videos)} 个视频，总时长{total_video_duration:.2f}秒")
                         
                         # 创建concat文件
                         concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
@@ -1489,14 +1485,19 @@ class VideoProcessor:
                                         self._get_ffmpeg_cmd(),
                                         "-y",
                                         "-i", last_video_path,
-                                        "-t", str(last_video_needed_duration),
+                                        "-t", str(last_video_needed_duration + 0.1),  # 添加0.1秒缓冲
+                                        "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                        "-r", "30",  # 强制使用30fps的输出帧率
+                                        "-fflags", "+genpts",  # 生成准确的时间戳
+                                        "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                        "-max_muxing_queue_size", "1024",  # 增加复用队列大小
                                         "-c:v", "copy",  # 不重新编码视频
                                         "-c:a", "copy",  # 不重新编码音频
                                         trimmed_last_video
                                     ]
                                     
                                     try:
-                                        logger.info(f"裁剪最后一个视频到 {last_video_needed_duration:.2f} 秒: {' '.join(trim_cmd)}")
+                                        logger.info(f"裁剪最后一个视频到 {last_video_needed_duration:.2f}秒 {' '.join(trim_cmd)}")
                                         subprocess.run(trim_cmd, check=True)
                                         
                                         # 在concat文件中使用裁剪后的视频
@@ -1531,17 +1532,23 @@ class VideoProcessor:
                                 logger.info(f"拼接视频: {' '.join(concat_cmd)}")
                                 subprocess.run(concat_cmd, check=True)
                                 
-                                # 替换音频流
+                                # 替换音频
                                 audio_cmd = [
                                     self._get_ffmpeg_cmd(),
                                     "-y",
                                     "-i", temp_video,  # 视频输入
                                     "-i", scene_audio_file,  # 音频输入
-                                    "-map", "0:v:0",  # 使用第一个输入的视频流
-                                    "-map", "1:a:0",  # 使用第二个输入的音频流
+                                    "-map", "0:v:0",  # 使用第一个输入的视频
+                                    "-map", "1:a:0",  # 使用第二个输入的音频
                                     "-c:v", "copy",  # 不重新编码视频
                                     "-c:a", "aac",  # 音频转AAC格式（兼容性好）
-                                    "-t", str(scene_audio_duration),  # 限制输出时长
+                                    "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                    "-r", "30",  # 强制使用30fps的输出帧率
+                                    "-fflags", "+genpts",  # 生成准确的时间戳
+                                    "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                    "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                    "-async", "1",  # 音频同步处理
+                                    "-t", str(scene_audio_duration + 0.1),  # 添加0.1秒缓冲
                                     scene_output
                                 ]
                                 
@@ -1570,7 +1577,7 @@ class VideoProcessor:
                         logger.warning(f"场景 {i+1} 没有视频文件，跳过")
                 else:
                     # 单视频模式 - 随机选择一个时长足够的视频
-                    logger.info(f"场景 {i+1} 使用单视频模式: 配音时长 {scene_audio_duration:.2f}秒")
+                    logger.info(f"场景 {i+1} 使用单视频模式 配音时长 {scene_audio_duration:.2f}秒")
                     
                     if scene_videos_list:
                         # 过滤出时长大于等于音频时长的视频
@@ -1587,7 +1594,161 @@ class VideoProcessor:
                         video_file = selected_video["path"]
                         video_duration = selected_video.get("duration", 0)
                         
-                        logger.info(f"为场景 {i+1} 选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
+                        # 检查视频时长是否足够，如果不足配音时长的一半，则切换到多视频模式
+                        if video_duration < scene_audio_duration * 0.5:
+                            logger.warning(f"场景 {i+1} 所选视频时长({video_duration:.2f}秒)不足配音时长的一半({scene_audio_duration:.2f}秒)，强制切换到多视频模式")
+                            
+                            # 以下代码实现多视频模式，类似于上面的多视频处理逻辑
+                            # 随机打乱视频列表
+                            shuffled_videos = list(scene_videos_list)
+                            random.shuffle(shuffled_videos)
+                            
+                            # 选择视频直到总时长超过音频时长
+                            selected_videos = []
+                            total_video_duration = 0
+                            
+                            for video in shuffled_videos:
+                                video_duration = video.get("duration", 0)
+                                selected_videos.append(video)
+                                total_video_duration += video_duration
+                                if total_video_duration >= scene_audio_duration:
+                                    break
+                            
+                            if not selected_videos:
+                                logger.warning(f"场景 {i+1} 没有找到足够的视频，跳过")
+                                continue
+                            
+                            logger.info(f"为场景{i+1} 选择{len(selected_videos)} 个视频，总时长{total_video_duration:.2f}秒")
+                            
+                            # 创建concat文件
+                            concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
+                            scene_concat_files.append(concat_file_path)
+                            
+                            with open(concat_file_path, 'w', encoding='utf-8') as concat_file:
+                                # 写入除最后一个视频外的所有视频（不裁剪）
+                                for j, video in enumerate(selected_videos[:-1]):
+                                    video_file = video["path"]
+                                    if not isinstance(video_file, str):
+                                        video_file = str(video_file)
+                                    video_file_escaped = video_file.replace("'", "\\'")
+                                    concat_file.write(f"file '{video_file_escaped}'\n")
+                                
+                                # 处理最后一个视频 - 如果需要裁剪
+                                if selected_videos:
+                                    last_video = selected_videos[-1]
+                                    last_video_path = last_video["path"]
+                                    if not isinstance(last_video_path, str):
+                                        last_video_path = str(last_video_path)
+                                    
+                                    # 计算最后一个视频应该的时长
+                                    previous_videos_duration = sum(v.get("duration", 0) for v in selected_videos[:-1])
+                                    last_video_needed_duration = scene_audio_duration - previous_videos_duration
+                                    
+                                    # 如果需要裁剪最后一个视频（只有当需要裁剪的时长小于视频原始时长）
+                                    last_video_duration = last_video.get("duration", 0)
+                                    
+                                    if 0 < last_video_needed_duration < last_video_duration:
+                                        # 裁剪最后一个视频
+                                        trimmed_last_video = os.path.join(temp_dir, f"trimmed_last_video_{i+1}.mp4")
+                                        
+                                        # 使用FFmpeg裁剪（不改变速度，只裁剪时长）
+                                        trim_cmd = [
+                                            self._get_ffmpeg_cmd(),
+                                            "-y",
+                                            "-i", last_video_path,
+                                            "-t", str(last_video_needed_duration + 0.1),  # 添加0.1秒缓冲
+                                            "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                            "-r", "30",  # 强制使用30fps的输出帧率
+                                            "-fflags", "+genpts",  # 生成准确的时间戳
+                                            "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                            "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                            "-c:v", "copy",  # 不重新编码视频
+                                            "-c:a", "copy",  # 不重新编码音频
+                                            trimmed_last_video
+                                        ]
+                                        
+                                        try:
+                                            logger.info(f"裁剪最后一个视频到 {last_video_needed_duration:.2f}秒 {' '.join(trim_cmd)}")
+                                            subprocess.run(trim_cmd, check=True)
+                                            
+                                            # 在concat文件中使用裁剪后的视频
+                                            trimmed_path_escaped = trimmed_last_video.replace("'", "\\'")
+                                            concat_file.write(f"file '{trimmed_path_escaped}'\n")
+                                        except Exception as e:
+                                            logger.warning(f"裁剪最后一个视频失败: {str(e)}，使用原始视频")
+                                            video_file_escaped = last_video_path.replace("'", "\\'")
+                                            concat_file.write(f"file '{video_file_escaped}'\n")
+                                    else:
+                                        # 不需要裁剪，直接使用原始视频
+                                        video_file_escaped = last_video_path.replace("'", "\\'")
+                                        concat_file.write(f"file '{video_file_escaped}'\n")
+                            
+                            # 执行拼接，生成场景视频
+                            concat_cmd = [
+                                self._get_ffmpeg_cmd(),
+                                "-y",
+                                "-f", "concat",
+                                "-safe", "0",
+                                "-i", concat_file_path,
+                                "-c", "copy"  # 直接复制，不重新编码
+                            ]
+                            
+                            # 如果有音频，替换音频
+                            if scene_audio_file:
+                                # 先拼接视频到临时文件
+                                temp_video = os.path.join(temp_dir, f"temp_scene_{i+1}.mp4")
+                                concat_cmd.append(temp_video)
+                                
+                                try:
+                                    logger.info(f"拼接视频: {' '.join(concat_cmd)}")
+                                    subprocess.run(concat_cmd, check=True)
+                                    
+                                    # 替换音频
+                                    audio_cmd = [
+                                        self._get_ffmpeg_cmd(),
+                                        "-y",
+                                        "-i", temp_video,  # 视频输入
+                                        "-i", scene_audio_file,  # 音频输入
+                                        "-map", "0:v:0",  # 使用第一个输入的视频
+                                        "-map", "1:a:0",  # 使用第二个输入的音频
+                                        "-c:v", "copy",  # 不重新编码视频
+                                        "-c:a", "aac",  # 音频转AAC格式（兼容性好）
+                                        "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                        "-r", "30",  # 强制使用30fps的输出帧率
+                                        "-fflags", "+genpts",  # 生成准确的时间戳
+                                        "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                        "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                        "-async", "1",  # 音频同步处理
+                                        "-t", str(scene_audio_duration + 0.1),  # 添加0.1秒缓冲
+                                        scene_output
+                                    ]
+                                    
+                                    logger.info(f"替换音频: {' '.join(audio_cmd)}")
+                                    subprocess.run(audio_cmd, check=True)
+                                    
+                                    # 添加到场景视频列表
+                                    scene_videos.append(scene_output)
+                                    logger.info(f"场景 {i+1} 处理完成")
+                                except Exception as e:
+                                    logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                            else:
+                                # 没有音频，直接输出到场景视频文件
+                                concat_cmd.append(scene_output)
+                                
+                                try:
+                                    logger.info(f"拼接视频: {' '.join(concat_cmd)}")
+                                    subprocess.run(concat_cmd, check=True)
+                                    
+                                    # 添加到场景视频列表
+                                    scene_videos.append(scene_output)
+                                    logger.info(f"场景 {i+1} 处理完成")
+                                except Exception as e:
+                                    logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                            
+                            # 跳过常规单视频模式处理
+                            continue
+                        
+                        logger.info(f"为场景{i+1} 选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
                         
                         # 确保视频文件路径是字符串
                         if not isinstance(video_file, str):
@@ -1602,11 +1763,17 @@ class VideoProcessor:
                                     "-y",
                                     "-i", video_file,  # 视频输入
                                     "-i", scene_audio_file,  # 音频输入
-                                    "-map", "0:v:0",  # 使用第一个输入的视频流
-                                    "-map", "1:a:0",  # 使用第二个输入的音频流
+                                    "-map", "0:v:0",  # 使用第一个输入的视频
+                                    "-map", "1:a:0",  # 使用第二个输入的音频
                                     "-c:v", "copy",  # 不重新编码视频
                                     "-c:a", "aac",  # 音频转AAC格式
-                                    "-t", str(scene_audio_duration),  # 限制输出时长
+                                    "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                    "-r", "30",  # 强制使用30fps的输出帧率
+                                    "-fflags", "+genpts",  # 生成准确的时间戳
+                                    "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                    "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                    "-async", "1",  # 音频同步处理
+                                    "-t", str(scene_audio_duration + 0.1),  # 添加0.1秒缓冲
                                     scene_output
                                 ]
                             else:
@@ -1615,7 +1782,12 @@ class VideoProcessor:
                                     self._get_ffmpeg_cmd(),
                                     "-y",
                                     "-i", video_file,
-                                    "-t", str(scene_audio_duration),
+                                    "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                    "-r", "30",  # 强制使用30fps的输出帧率
+                                    "-fflags", "+genpts",  # 生成准确的时间戳
+                                    "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                    "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                    "-t", str(scene_audio_duration + 0.1),
                                     "-c:v", "copy",  # 不重新编码视频
                                     "-c:a", "copy",  # 不重新编码音频
                                     scene_output
@@ -1634,107 +1806,123 @@ class VideoProcessor:
             
             # 没有处理好的场景视频，提前返回
             if not scene_videos:
-                logger.error("没有生成任何场景视频，处理终止")
+                logger.error("没有生成任何场景视频，处理结束")
                 return None
             
             # 阶段3: 最终合并阶段 - 拼接所有场景视频
-            logger.info(f"开始合并 {len(scene_videos)} 个场景视频...")
+            logger.info(f"开始拼接{len(scene_videos)} 个场景视频...")
             
             # 创建最终concat文件
-            final_concat_file = os.path.join(concat_dir, "final_concat.txt")
+            concat_file = os.path.join(temp_dir, "final_concat.txt")
+            try:
+                with open(concat_file, "w", encoding="utf-8") as f:
+                    for scene_video in scene_videos:
+                        # 确保路径是字符串
+                        if not isinstance(scene_video, str):
+                            scene_video = str(scene_video)
+                        
+                        # 处理路径中的单引号
+                        scene_video_escaped = scene_video.replace("'", "\\'")
+                        f.write(f"file '{scene_video_escaped}'\n")
+            except Exception as e:
+                logger.error(f"创建concat文件失败: {str(e)}")
+                return None
             
-            with open(final_concat_file, 'w', encoding='utf-8') as f:
-                for scene_video in scene_videos:
-                    # 确保路径是字符串
-                    if not isinstance(scene_video, str):
-                        scene_video = str(scene_video)
-                    
-                    # 处理路径中的单引号
-                    scene_video_escaped = scene_video.replace("'", "\\'")
-                    f.write(f"file '{scene_video_escaped}'\n")
-            
-            # 合并视频 - 使用concat demuxer，不重新编码
+            # 拼接所有视频
             merge_cmd = [
                 self._get_ffmpeg_cmd(),
                 "-y",
                 "-f", "concat",
                 "-safe", "0",
-                "-i", final_concat_file,
-                "-c", "copy"  # 不重新编码，直接复制
+                "-i", concat_file,
+                "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                "-r", "30",  # 强制使用30fps的输出帧率
+                "-fflags", "+genpts",  # 生成准确的时间戳
+                "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                "-async", "1",  # 音频同步处理
+                "-c:v", "copy",  # 不重新编码视频
+                "-c:a", "aac"  # 音频强制编码为AAC以提高兼容性
             ]
             
-            # 处理背景音乐
+            # 添加背景音乐
             if bgm_path and os.path.exists(bgm_path):
-                logger.info(f"添加背景音乐: {bgm_path}")
-                
-                # 确保背景音乐路径是字符串
-                if not isinstance(bgm_path, str):
-                    bgm_path = str(bgm_path)
-                
-                # 先合并视频到临时文件
-                temp_merged_video = os.path.join(temp_dir, "temp_merged.mp4")
-                merge_cmd.append(temp_merged_video)
+                # 拼接没有音频的视频版本
+                temp_merge_without_audio = os.path.join(temp_dir, "temp_merged_no_audio.mp4")
+                temp_merge_cmd = merge_cmd.copy()
+                temp_merge_cmd.append("-an")  # 去除音频
+                temp_merge_cmd.append(temp_merge_without_audio)
                 
                 try:
-                    logger.info(f"合并视频: {' '.join(merge_cmd)}")
-                    subprocess.run(merge_cmd, check=True)
+                    logger.info(f"创建无音频临时合并视频: {' '.join(temp_merge_cmd)}")
+                    subprocess.run(temp_merge_cmd, check=True)
                     
-                    # 获取合并后视频的时长
-                    video_duration_cmd = [
-                        self._get_ffmpeg_cmd().replace("ffmpeg", "ffprobe"),
-                        "-v", "error",
-                        "-show_entries", "format=duration",
-                        "-of", "default=noprint_wrappers=1:nokey=1",
-                        temp_merged_video
-                    ]
-                    
-                    result = subprocess.run(video_duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                    merged_duration = float(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else 0
-                    
-                    # 添加背景音乐 - 使用音量混合，不改变视频编码
-                    bgm_cmd = [
+                    # 创建临时音频文件提取原始视频的音频
+                    temp_audio = os.path.join(temp_dir, "temp_original_audio.aac")
+                    audio_extract_cmd = [
                         self._get_ffmpeg_cmd(),
                         "-y",
-                        "-i", temp_merged_video,
-                        "-i", bgm_path,
-                        "-filter_complex", f"[1:a]volume={self.settings.get('bgm_volume', 0.3)}[bgm];[0:a][bgm]amix=inputs=2:duration=first[a]",
-                        "-map", "0:v",
-                        "-map", "[a]",
+                        "-f", "concat",
+                        "-safe", "0",
+                        "-i", concat_file,
+                        "-c:a", "aac",
+                        "-vn",  # 不包含视频
+                        temp_audio
+                    ]
+                    
+                    logger.info(f"提取原始音频: {' '.join(audio_extract_cmd)}")
+                    subprocess.run(audio_extract_cmd, check=True)
+                    
+                    # 添加背景音乐和原始音频
+                    audio_mix_cmd = [
+                        self._get_ffmpeg_cmd(),
+                        "-y",
+                        "-i", temp_merge_without_audio,  # 视频（无音频）
+                        "-i", temp_audio,  # 原始音频
+                        "-i", bgm_path,  # 背景音乐
+                        "-filter_complex",
+                        f"[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume={self.settings.get('voice_volume', 1.0)}[voice];" +
+                        f"[2:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume={self.settings.get('bgm_volume', 0.3)}[bgm];" +
+                        "[voice][bgm]amix=inputs=2:duration=first[aout]",
+                        "-map", "0:v:0",  # 使用第一个输入的视频流
+                        "-map", "[aout]",  # 使用混合后的音频流
+                        "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                        "-r", "30",  # 强制使用30fps的输出帧率
+                        "-fflags", "+genpts",  # 生成准确的时间戳
+                        "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                        "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                        "-async", "1",  # 音频同步处理
                         "-c:v", "copy",  # 不重新编码视频
-                        "-t", str(merged_duration),  # 限制输出时长
+                        "-c:a", "aac",  # 音频使用AAC编码
                         output_path
                     ]
                     
-                    logger.info(f"添加背景音乐: {' '.join(bgm_cmd)}")
-                    subprocess.run(bgm_cmd, check=True)
+                    logger.info(f"添加背景音乐: {' '.join(audio_mix_cmd)}")
+                    subprocess.run(audio_mix_cmd, check=True)
+                    
+                    return output_path
                 except Exception as e:
                     logger.error(f"添加背景音乐失败: {str(e)}")
                     # 如果背景音乐处理失败，尝试使用原始合并视频
                     try:
                         import shutil
-                        shutil.copy(temp_merged_video, output_path)
-                        logger.info(f"复制合并后的视频: {temp_merged_video} -> {output_path}")
-                    except Exception as copy_e:
-                        logger.error(f"复制视频失败: {str(copy_e)}")
+                        logger.warning("尝试使用无背景音乐的版本...")
+                        shutil.copy(temp_merge_without_audio, output_path)
+                        return output_path
+                    except Exception as copy_error:
+                        logger.error(f"复制备份视频失败: {str(copy_error)}")
                         return None
             else:
                 # 没有背景音乐，直接输出
                 merge_cmd.append(output_path)
                 
                 try:
-                    logger.info(f"合并视频: {' '.join(merge_cmd)}")
+                    logger.info(f"合并所有场景视频: {' '.join(merge_cmd)}")
                     subprocess.run(merge_cmd, check=True)
+                    return output_path
                 except Exception as e:
                     logger.error(f"合并视频失败: {str(e)}")
                     return None
-            
-            # 验证输出文件
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"成功生成视频: {output_path}")
-                return output_path
-            else:
-                logger.error(f"输出文件无效: {output_path}")
-                return None
                 
         except Exception as e:
             logger.error(f"处理视频时出错: {str(e)}")
@@ -1809,3 +1997,139 @@ class VideoProcessor:
         except Exception as e:
             self.logger.warning(f"解析快捷方式失败: {shortcut_path}, 错误: {str(e)}")
             return None
+
+    def direct_process_parent_folder(self, parent_folder_path: str, output_path: str, bgm_path: str = None) -> bool:
+        # ... existing code ...
+        # 构建基本合并命令 - 使用concat demuxer
+        cmd = [
+            ffmpeg_cmd,
+            "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+            "-r", "30",  # 强制使用30fps的输出帧率
+            "-fflags", "+genpts",  # 添加生成正确时间戳的参数
+            "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+            "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+            "-i", list_file
+        ]
+        
+        # 默认音频时长 - 避免未定义的变量错误
+        max_duration = 30.0  # 默认30秒
+        
+        # 尝试获取所有音频的总时长作为限制
+        try:
+            audios_durations = []
+            for i, subfolder in enumerate(subfolders):
+                audio_folder = os.path.join(subfolder, "配音")
+                if os.path.exists(audio_folder) and os.path.isdir(audio_folder):
+                    for root, _, files in os.walk(audio_folder):
+                        for file in files:
+                            if file.lower().endswith((".mp3", ".wav", ".aac", ".ogg", ".flac")):
+                                audio_path = os.path.join(root, file)
+                                # 使用FFprobe获取音频时长
+                                try:
+                                    ffprobe_cmd = self._get_ffmpeg_cmd().replace("ffmpeg", "ffprobe")
+                                    cmd_duration = [ffprobe_cmd, "-v", "error", "-show_entries", 
+                                                  "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", audio_path]
+                                    result = subprocess.run(cmd_duration, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                                    if result.returncode == 0 and result.stdout.strip():
+                                        audios_durations.append(float(result.stdout.strip()))
+                                except Exception as e:
+                                    logger.warning(f"获取音频时长失败: {audio_path}, {str(e)}")
+                
+                # 计算所有音频的总时长
+                if audios_durations:
+                    max_duration = sum(audios_durations)
+                    logger.info(f"计算出所有音频总时长: {max_duration:.2f}秒")
+        except Exception as e:
+            logger.warning(f"计算音频总时长出错: {str(e)}")
+        
+        # 添加输出时长限制参数
+        cmd.extend(["-t", str(max_duration + 0.2)])  # 增加0.2秒余量避免视频定格
+        
+        # 判断是否需要添加背景音乐
+        if bgm_path and os.path.exists(bgm_path):
+            # 如果需要添加背景音乐，则需要两步处理
+            # 1. 先使用concat demuxer合并视频并保留原始音频
+            temp_merged_video = self._create_temp_file("direct_merged_video", ".mp4")
+            
+            # 使用copy编解码器直接拼接，避免重新编码
+            concat_cmd = cmd + [
+                "-c", "copy",  # 保持原有音频和视频
+                "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                "-r", "30",  # 强制使用30fps的输出帧率
+                "-fflags", "+genpts",  # 添加生成正确时间戳的参数
+                "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                "-movflags", "+faststart",
+                temp_merged_video
+            ]
+
+    def _fallback_concat_videos(self, videos, output_path, bgm_path=None):
+        """当常规合并方法失败时的备用方法"""
+        self.report_progress("尝试使用备用方法合成视频...", 85)
+        
+        # 提取所有视频路径
+        video_paths = []
+        for video in videos:
+            path = video.get("path", "")
+            if path and os.path.exists(path):
+                video_paths.append(path)
+        
+        if not video_paths:
+            logger.error("没有有效的视频路径，无法使用备用方法合成")
+            return False
+            
+        # 获取第一个视频的路径
+        first_video = video_paths[0]
+        
+        # 使用FFmpeg直接将所有视频连接起来
+        try:
+            # 获取FFmpeg命令
+            ffmpeg_cmd = self._get_ffmpeg_cmd()
+            
+            # 创建临时文件列表
+            temp_list_file = self._create_temp_file("fallback_list", ".txt")
+            with open(temp_list_file, "w", encoding="utf-8") as f:
+                for vid_path in video_paths:
+                    # 处理路径中的单引号，避免f-string中使用反斜杠
+                    vid_path_escaped = vid_path.replace("'", r"\'")
+                    f.write(f"file '{vid_path_escaped}'\n")
+            
+            # 构建命令
+            cmd = [
+                ffmpeg_cmd,
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", temp_list_file,
+                "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                "-r", "30",  # 强制使用30fps的输出帧率
+                "-fflags", "+genpts",  # 添加生成正确时间戳的参数
+                "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                "-c", "copy",
+                "-movflags", "+faststart",
+                output_path
+            ]
+            
+            logger.info(f"执行备用视频拼接命令: {' '.join(cmd)}")
+            
+            try:
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                logger.info(f"备用方法成功，输出到: {output_path}")
+                self.report_progress("视频合成完成！", 100)
+                return True
+            except subprocess.CalledProcessError as e:
+                logger.error(f"备用方法失败: {e.stderr}")
+                
+                # 如果FFmpeg失败，尝试直接复制文件
+                import shutil
+                shutil.copy2(first_video, output_path)
+                logger.info(f"已直接复制第一个视频 {first_video} 到 {output_path}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"备用合成方法失败: {str(e)}")
+            return False
