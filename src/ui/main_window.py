@@ -680,61 +680,65 @@ class MainWindow(QMainWindow):
     
     def _init_menubar(self):
         """初始化菜单栏"""
+        # 创建菜单栏
         menubar = self.menuBar()
         
-        # 文件菜单
+        # 创建"文件"菜单
         file_menu = menubar.addMenu("文件")
         
-        view_log_action = file_menu.addAction("查看日志文件")
-        view_log_action.triggered.connect(self.view_log_file)
+        # 添加"打开素材文件夹"操作
+        open_action = QAction("打开素材文件夹", self)
+        open_action.triggered.connect(self.on_add_material)
+        file_menu.addAction(open_action)
         
+        # 添加"批量导入素材"操作
+        batch_import_action = QAction("批量导入素材", self)
+        batch_import_action.triggered.connect(self.on_batch_import)
+        file_menu.addAction(batch_import_action)
+        
+        # 添加分隔线
         file_menu.addSeparator()
         
-        exit_action = file_menu.addAction("退出")
+        # 添加"配置管理"操作
+        config_action = QAction("配置管理", self)
+        config_action.triggered.connect(self.show_config_manager)
+        file_menu.addAction(config_action)
+        
+        # 添加分隔线
+        file_menu.addSeparator()
+        
+        # 添加"退出"操作
+        exit_action = QAction("退出", self)
         exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
         
-        # 工具菜单
-        tools_menu = menubar.addMenu("工具")
-        
-        # 添加合成父文件夹视频选项
-        concat_parent_action = tools_menu.addAction("合成父文件夹视频")
-        concat_parent_action.triggered.connect(self.concat_parent_folder_videos)
-        
-        tools_menu.addSeparator()
-        
-        gpu_test_action = tools_menu.addAction("GPU加速测试")
-        gpu_test_action.triggered.connect(self.run_gpu_test)
-        
-        gpu_status_action = tools_menu.addAction("显示GPU状态")
-        gpu_status_action.triggered.connect(self.show_gpu_status)
-        
-        # 帮助菜单
+        # 创建"帮助"菜单
         help_menu = menubar.addMenu("帮助")
         
-        # 添加主要功能菜单项
-        main_features_action = help_menu.addAction("主要功能")
-        main_features_action.triggered.connect(self.show_main_features)
+        # 添加"主要功能"操作
+        features_action = QAction("主要功能", self)
+        features_action.triggered.connect(self.show_main_features)
+        help_menu.addAction(features_action)
         
-        # 添加性能优化提示菜单项
-        performance_tips_action = help_menu.addAction("性能优化提示")
-        performance_tips_action.triggered.connect(self.show_performance_tips)
+        # 添加"性能优化提示"操作
+        performance_action = QAction("性能优化提示", self)
+        performance_action.triggered.connect(self.show_performance_tips)
+        help_menu.addAction(performance_action)
         
-        # 添加抽取模式说明菜单项
-        extract_mode_action = help_menu.addAction("抽取模式说明")
-        extract_mode_action.triggered.connect(self.show_extract_mode_guide)
+        # 添加"FFmpeg设置指南"操作
+        ffmpeg_action = QAction("FFmpeg设置指南", self)
+        ffmpeg_action.triggered.connect(self.show_ffmpeg_guide)
+        help_menu.addAction(ffmpeg_action)
         
-        # 添加合成阶段说明菜单项
-        compose_guide_action = help_menu.addAction("合成阶段说明")
-        compose_guide_action.triggered.connect(self.show_compose_guide)
+        # 添加"日志查看器"操作
+        log_action = QAction("查看日志", self)
+        log_action.triggered.connect(self.view_log_file)
+        help_menu.addAction(log_action)
         
-        ffmpeg_guide_action = help_menu.addAction("安装FFmpeg指南")
-        ffmpeg_guide_action.triggered.connect(self.show_ffmpeg_guide)
-        
-        ffmpeg_config_action = help_menu.addAction("配置FFmpeg路径")
-        ffmpeg_config_action.triggered.connect(self.config_ffmpeg_path)
-        
-        about_action = help_menu.addAction("关于")
+        # 添加"关于"操作
+        about_action = QAction("关于", self)
         about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
     
     def show_main_features(self):
         """显示主要功能帮助页面"""
@@ -4839,6 +4843,66 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             error_detail = traceback.format_exc()
             logger.error(f"详细错误信息: {error_detail}")
             return False
+
+    def show_config_manager(self):
+        """显示配置管理器对话框"""
+        try:
+            # 导入配置管理器对话框（修改为新路径）
+            from src.用户配置.config_dialog import ConfigManagerDialog
+            
+            # 创建对话框
+            dialog = ConfigManagerDialog(self)
+            
+            # 连接配置保存信号
+            dialog.configSaved.connect(self._on_config_saved)
+            
+            # 显示对话框
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"显示配置管理器对话框时出错: {e}")
+            QMessageBox.warning(
+                self, 
+                "错误", 
+                f"显示配置管理器对话框时出错: {e}"
+            )
+
+    def _on_config_saved(self, config, source):
+        """
+        配置保存后的处理函数
+        
+        Args:
+            config: 保存的配置
+            source: 保存位置，'user'或'project'
+        """
+        try:
+            # 显示成功消息
+            if source == "project":
+                QMessageBox.information(
+                    self, 
+                    "配置已保存", 
+                    "配置已保存到项目配置文件，将会随版本控制一起提交。"
+                )
+            else:
+                QMessageBox.information(
+                    self, 
+                    "配置已保存", 
+                    "配置已保存到用户配置文件。\n"
+                    "部分配置更改可能需要重启软件才能生效。"
+                )
+            
+            # 如果当前有正在运行的处理任务，提示用户
+            if hasattr(self, 'processor') and self.processor is not None:
+                QMessageBox.warning(
+                    self, 
+                    "警告", 
+                    "配置已保存，但当前有正在运行的处理任务。\n"
+                    "某些配置更改可能不会立即应用到当前任务。"
+                )
+                
+            # 重新加载用户设置
+            self._load_user_settings()
+        except Exception as e:
+            logger.error(f"处理配置保存事件时出错: {e}")
 
 class WatermarkPreview(QFrame):
     """水印位置预览控件，允许用户通过拖动调整水印位置"""
