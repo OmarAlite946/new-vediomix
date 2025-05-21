@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
     QProgressBar, QComboBox, QTabWidget, QGroupBox, QFileDialog,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QCheckBox, QStatusBar, QAction, QMenu, QTextEdit, QDialog, QApplication, QStyle,
-    QSplitter, QSizePolicy, QFrame, QDialogButtonBox, QTextBrowser
+    QSplitter, QSizePolicy, QFrame, QDialogButtonBox, QTextBrowser, QProgressDialog
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QMetaObject, Q_ARG, Qt, QPoint, QRect
 from PyQt5 import QtCore
@@ -3537,8 +3537,10 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         folder_name = os.path.basename(root_dir)
         self.parent_folder_title.setText(folder_name)
             
-        from src.utils.file_utils import resolve_shortcut
+        from src.utils.file_utils import resolve_shortcut, list_media_files
         from src.utils.logger import get_logger
+        import gc
+        import traceback
         
         logger = get_logger()
         
@@ -3551,9 +3553,44 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 设置鼠标等待状态
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
+        # 创建进度对话框
+        progress_dialog = QProgressDialog("正在扫描素材文件夹...", "取消", 0, 100, self)
+        progress_dialog.setWindowTitle("批量导入")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(500)  # 500ms后才显示
+        progress_dialog.setValue(0)
+        
         try:
+            # 首先获取所有子文件夹，以便计算进度
+            items = []
+            try:
+                items = os.listdir(root_dir)
+                # 过滤出文件夹和快捷方式
+                items = [item for item in items if os.path.isdir(os.path.join(root_dir, item)) or 
+                        (isinstance(item, str) and item.lower().endswith('.lnk'))]
+                total_items = len(items)
+            except Exception as e:
+                logger.error(f"无法列出目录 {root_dir} 的内容: {str(e)}")
+                total_items = 0
+            
+            # 处理进度更新
+            def update_progress(current, total, message=""):
+                if total > 0:
+                    percent = int((current / total) * 100)
+                    progress_dialog.setValue(percent)
+                    if message:
+                        progress_dialog.setLabelText(f"{message} ({current}/{total})")
+                    QApplication.processEvents()  # 处理UI事件，保持界面响应
+                    return not progress_dialog.wasCanceled()
+                return True
+            
             # 遍历根目录下的所有子文件夹
-            for item in os.listdir(root_dir):
+            for i, item in enumerate(items):
+                # 检查是否取消
+                if not update_progress(i, total_items, f"正在扫描: {item}"):
+                    logger.info("用户取消了批量导入")
+                    break
+                    
                 # 确保文件名是正确的字符串格式
                 if isinstance(item, bytes):
                     try:
@@ -3594,107 +3631,12 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     logger.warning(f"项目不是目录，跳过: {actual_path}")
                     continue
                 
-                # 检查是否有"视频"或"配音"子文件夹
-                has_video_folder = os.path.exists(os.path.join(actual_path, "视频"))
-                has_audio_folder = os.path.exists(os.path.join(actual_path, "配音"))
+                # 更新进度信息
+                update_progress(i, total_items, f"正在检查: {item}")
                 
-                # 初始化路径变量
-                video_path = os.path.join(actual_path, "视频")
-                audio_path = os.path.join(actual_path, "配音")
-                
-                # 检查"视频"子文件夹是否是快捷方式（检查多种可能的命名格式）
-                if not has_video_folder:
-                    # 检查特定命名格式的快捷方式
-                    video_shortcut_paths = [
-                        os.path.join(actual_path, "视频 - 快捷方式.lnk"),
-                        os.path.join(actual_path, "视频.lnk"),
-                        os.path.join(actual_path, "视频快捷方式.lnk")
-                    ]
-                    
-                    # 检查所有可能的命名格式
-                    for shortcut_path in video_shortcut_paths:
-                        if os.path.exists(shortcut_path):
-                            logger.info(f"发现视频快捷方式: {shortcut_path}")
-                            video_target = resolve_shortcut(shortcut_path)
-                            if video_target:
-                                video_path = video_target
-                                has_video_folder = True
-                                logger.info(f"检测到视频快捷方式: {shortcut_path} -> {video_path}")
-                                break
-                    
-                    # 如果仍未找到，则尝试搜索包含"视频"的所有.lnk文件
-                    if not has_video_folder:
-                        try:
-                            for item in os.listdir(actual_path):
-                                # 确保文件名是正确的字符串格式
-                                if isinstance(item, bytes):
-                                    try:
-                                        item = item.decode('utf-8')
-                                    except UnicodeDecodeError:
-                                        try:
-                                            item = item.decode('gbk')
-                                        except UnicodeDecodeError:
-                                            logger.error(f"无法解码文件名: {item}")
-                                            continue
-                                
-                                if item.lower().endswith('.lnk') and "视频" in item:
-                                    shortcut_path = os.path.join(actual_path, item)
-                                    logger.info(f"发现可能的视频快捷方式: {shortcut_path}")
-                                    video_target = resolve_shortcut(shortcut_path)
-                                    if video_target and os.path.isdir(video_target):
-                                        video_path = video_target
-                                        has_video_folder = True
-                                        logger.info(f"检测到视频快捷方式: {shortcut_path} -> {video_path}")
-                                        break
-                        except Exception as e:
-                            logger.error(f"搜索视频快捷方式时出错: {str(e)}")
-                
-                # 检查"配音"子文件夹是否是快捷方式（检查多种可能的命名格式）
-                if not has_audio_folder:
-                    # 检查特定命名格式的快捷方式
-                    audio_shortcut_paths = [
-                        os.path.join(actual_path, "配音 - 快捷方式.lnk"),
-                        os.path.join(actual_path, "配音.lnk"),
-                        os.path.join(actual_path, "配音快捷方式.lnk")
-                    ]
-                    
-                    # 检查所有可能的命名格式
-                    for shortcut_path in audio_shortcut_paths:
-                        if os.path.exists(shortcut_path):
-                            logger.info(f"发现配音快捷方式: {shortcut_path}")
-                            audio_target = resolve_shortcut(shortcut_path)
-                            if audio_target:
-                                audio_path = audio_target
-                                has_audio_folder = True
-                                logger.info(f"检测到配音快捷方式: {shortcut_path} -> {audio_path}")
-                                break
-                    
-                    # 如果仍未找到，则尝试搜索包含"配音"的所有.lnk文件
-                    if not has_audio_folder:
-                        try:
-                            for item in os.listdir(actual_path):
-                                # 确保文件名是正确的字符串格式
-                                if isinstance(item, bytes):
-                                    try:
-                                        item = item.decode('utf-8')
-                                    except UnicodeDecodeError:
-                                        try:
-                                            item = item.decode('gbk')
-                                        except UnicodeDecodeError:
-                                            logger.error(f"无法解码文件名: {item}")
-                                            continue
-                                
-                                if item.lower().endswith('.lnk') and "配音" in item:
-                                    shortcut_path = os.path.join(actual_path, item)
-                                    logger.info(f"发现可能的配音快捷方式: {shortcut_path}")
-                                    audio_target = resolve_shortcut(shortcut_path)
-                                    if audio_target and os.path.isdir(audio_target):
-                                        audio_path = audio_target
-                                        has_audio_folder = True
-                                        logger.info(f"检测到配音快捷方式: {shortcut_path} -> {audio_path}")
-                                        break
-                        except Exception as e:
-                            logger.error(f"搜索配音快捷方式时出错: {str(e)}")
+                # 使用新方法处理视频和配音文件夹，增加搜索深度
+                has_video_folder, video_path = self._process_folder_shortcuts(actual_path, "视频", max_depth=4, _current_depth=0)
+                has_audio_folder, audio_path = self._process_folder_shortcuts(actual_path, "配音", max_depth=4, _current_depth=0)
                 
                 if has_video_folder or has_audio_folder:
                     # 检查子文件夹中是否有媒体文件
@@ -3703,15 +3645,19 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     
                     if has_video_folder:
                         try:
+                            # 优化：仅检查是否存在视频文件，不需要获取所有文件
                             media = list_media_files(video_path, recursive=True)
                             video_count = len(media['videos'])
+                            logger.info(f"素材'{item}': 找到视频 {video_count} 个，路径: {video_path}")
                         except Exception as e:
                             logger.error(f"扫描视频文件夹失败: {str(e)}")
                     
                     if has_audio_folder:
                         try:
+                            # 优化：仅检查是否存在音频文件，不需要获取所有文件
                             media = list_media_files(audio_path, recursive=True)
                             audio_count = len(media['audios'])
+                            logger.info(f"素材'{item}': 找到配音 {audio_count} 个，路径: {audio_path}")
                         except Exception as e:
                             logger.error(f"扫描音频文件夹失败: {str(e)}")
                     
@@ -3775,15 +3721,29 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                         self.video_table.setItem(row_count, 5, status_item)  # 状态
                         
                         added_count += 1
+                        
+                        # 每添加10个条目，更新一次UI
+                        if added_count % 10 == 0:
+                            QApplication.processEvents()
                     else:
                         skipped_count += 1
                         logger.warning(f"跳过没有媒体文件的素材文件夹: {actual_path}")
                 else:
                     skipped_count += 1
                     logger.warning(f"跳过没有视频或配音子文件夹的素材文件夹: {actual_path}")
+                    
+                # 定期进行垃圾回收，防止内存占用过高
+                if i % 20 == 0:
+                    gc.collect()
         except Exception as e:
             logger.error(f"导入素材文件夹时出错: {str(e)}")
+            error_detail = traceback.format_exc()
+            logger.error(f"详细错误信息: {error_detail}")
         finally:
+            # 关闭进度对话框
+            progress_dialog.setValue(100)
+            progress_dialog.close()
+            
             # 恢复鼠标状态
             QApplication.restoreOverrideCursor()
         
@@ -4638,8 +4598,10 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         folder_name = os.path.basename(root_dir)
         self.parent_folder_title.setText(folder_name)
             
-        from src.utils.file_utils import resolve_shortcut
+        from src.utils.file_utils import resolve_shortcut, list_media_files
         from src.utils.logger import get_logger
+        import gc
+        import traceback
         
         logger = get_logger()
         
@@ -4652,9 +4614,44 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 设置鼠标等待状态
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
+        # 创建进度对话框
+        progress_dialog = QProgressDialog("正在扫描素材文件夹...", "取消", 0, 100, self)
+        progress_dialog.setWindowTitle("批量导入")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(500)  # 500ms后才显示
+        progress_dialog.setValue(0)
+        
         try:
+            # 首先获取所有子文件夹，以便计算进度
+            items = []
+            try:
+                items = os.listdir(root_dir)
+                # 过滤出文件夹和快捷方式
+                items = [item for item in items if os.path.isdir(os.path.join(root_dir, item)) or 
+                        (isinstance(item, str) and item.lower().endswith('.lnk'))]
+                total_items = len(items)
+            except Exception as e:
+                logger.error(f"无法列出目录 {root_dir} 的内容: {str(e)}")
+                total_items = 0
+            
+            # 处理进度更新
+            def update_progress(current, total, message=""):
+                if total > 0:
+                    percent = int((current / total) * 100)
+                    progress_dialog.setValue(percent)
+                    if message:
+                        progress_dialog.setLabelText(f"{message} ({current}/{total})")
+                    QApplication.processEvents()  # 处理UI事件，保持界面响应
+                    return not progress_dialog.wasCanceled()
+                return True
+            
             # 遍历根目录下的所有子文件夹
-            for item in os.listdir(root_dir):
+            for i, item in enumerate(items):
+                # 检查是否取消
+                if not update_progress(i, total_items, f"正在扫描: {item}"):
+                    logger.info("用户取消了批量导入")
+                    break
+                    
                 # 确保文件名是正确的字符串格式
                 if isinstance(item, bytes):
                     try:
@@ -4695,6 +4692,9 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     logger.warning(f"项目不是目录，跳过: {actual_path}")
                     continue
                 
+                # 更新进度信息
+                update_progress(i, total_items, f"正在检查: {item}")
+                
                 # 使用新方法处理视频和配音文件夹，增加搜索深度
                 has_video_folder, video_path = self._process_folder_shortcuts(actual_path, "视频", max_depth=4, _current_depth=0)
                 has_audio_folder, audio_path = self._process_folder_shortcuts(actual_path, "配音", max_depth=4, _current_depth=0)
@@ -4706,6 +4706,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     
                     if has_video_folder:
                         try:
+                            # 优化：仅检查是否存在视频文件，不需要获取所有文件
                             media = list_media_files(video_path, recursive=True)
                             video_count = len(media['videos'])
                             logger.info(f"素材'{item}': 找到视频 {video_count} 个，路径: {video_path}")
@@ -4714,6 +4715,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     
                     if has_audio_folder:
                         try:
+                            # 优化：仅检查是否存在音频文件，不需要获取所有文件
                             media = list_media_files(audio_path, recursive=True)
                             audio_count = len(media['audios'])
                             logger.info(f"素材'{item}': 找到配音 {audio_count} 个，路径: {audio_path}")
@@ -4780,15 +4782,29 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                         self.video_table.setItem(row_count, 5, status_item)  # 状态
                         
                         added_count += 1
+                        
+                        # 每添加10个条目，更新一次UI
+                        if added_count % 10 == 0:
+                            QApplication.processEvents()
                     else:
                         skipped_count += 1
                         logger.warning(f"跳过没有媒体文件的素材文件夹: {actual_path}")
                 else:
                     skipped_count += 1
                     logger.warning(f"跳过没有视频或配音子文件夹的素材文件夹: {actual_path}")
+                    
+                # 定期进行垃圾回收，防止内存占用过高
+                if i % 20 == 0:
+                    gc.collect()
         except Exception as e:
             logger.error(f"导入素材文件夹时出错: {str(e)}")
+            error_detail = traceback.format_exc()
+            logger.error(f"详细错误信息: {error_detail}")
         finally:
+            # 关闭进度对话框
+            progress_dialog.setValue(100)
+            progress_dialog.close()
+            
             # 恢复鼠标状态
             QApplication.restoreOverrideCursor()
         
@@ -4804,7 +4820,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 logger.info(f"自动导入: 检测到标准模式，包含 {normal_count} 个普通文件夹")
         else:
             logger.warning(f"自动导入: 未找到符合条件的素材文件夹，路径: {root_dir}")
-
+    
     # 添加窗口显示事件处理
     def showEvent(self, event):
         """窗口显示事件，自动更新媒体数量"""
@@ -4878,7 +4894,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             # 显示成功消息
             if source == "project":
                 QMessageBox.information(
-                    self, 
+            self, 
                     "配置已保存", 
                     "配置已保存到项目配置文件，将会随版本控制一起提交。"
                 )
