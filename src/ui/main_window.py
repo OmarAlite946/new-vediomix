@@ -237,6 +237,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setMinimumWidth(250)
         
+        # 分为两个标签：一个用于显示进度信息，一个用于显示时间信息
         self.label_progress = QLabel("等待合成任务...")
         self.label_progress.setStyleSheet("color: #666666;")
         # 添加固定宽度和文本省略设置，防止文本变化导致UI跳动
@@ -248,8 +249,19 @@ class MainWindow(QMainWindow):
         self.label_progress.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.label_progress.setWordWrap(False)
         
+        # 添加时间信息标签
+        self.label_time_info = QLabel("时间: 00:00:00")
+        self.label_time_info.setStyleSheet("color: #666666;")
+        self.label_time_info.setMinimumWidth(250)
+        self.label_time_info.setTextFormat(Qt.PlainText)
+        self.label_time_info.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.label_time_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.label_time_info.setWordWrap(False)
+        self.label_time_info.setVisible(False)  # 初始时隐藏
+        
         progress_status_layout.addWidget(self.progress_bar)
         progress_status_layout.addWidget(self.label_progress)
+        progress_status_layout.addWidget(self.label_time_info)
         
         # 添加文件夹名称到水平布局的左侧
         folder_control_layout.addWidget(self.parent_folder_title, 1)
@@ -1179,10 +1191,31 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         if abs(current_percent - percent) < 1 and message == self.label_progress.text():
             return
         
-        # 更新标签文本，保持UI布局稳定
-        self.label_progress.setText(message)
-        # 设置标签工具提示，便于查看完整文本
-        self.label_progress.setToolTip(message)
+        # 分离进度消息和时间信息
+        time_info = ""
+        base_message = message
+        
+        # 检查消息中是否包含时间信息
+        if "(已用时间:" in message:
+            parts = message.split("(已用时间:", 1)
+            base_message = parts[0].strip()
+            time_info = "时间: " + parts[1].replace(")", "").strip()
+        elif "(已用时:" in message:
+            parts = message.split("(已用时:", 1)
+            base_message = parts[0].strip()
+            time_info = "时间: " + parts[1].replace(")", "").strip()
+        
+        # 更新主进度标签
+        self.label_progress.setText(base_message)
+        self.label_progress.setToolTip(base_message)
+        
+        # 更新时间信息标签
+        if time_info:
+            self.label_time_info.setText(time_info)
+            self.label_time_info.setToolTip(time_info)
+            self.label_time_info.setVisible(True)
+        else:
+            self.label_time_info.setVisible(False)
         
         # 更新进度条值
         self.progress_bar.setValue(int(percent))

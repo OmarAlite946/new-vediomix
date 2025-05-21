@@ -247,15 +247,20 @@ class VideoProcessor:
         """
         if self.progress_callback:
             try:
+                # 确保start_time已经设置，如果尚未设置，则设置为当前时间
+                if self.start_time == 0:
+                    self.start_time = time.time()
+                    # 启动进度定时器
+                    self._start_progress_timer()
+                
                 # 如果处理已经开始，添加已用时间
-                if self.start_time > 0:
-                    elapsed_time = time.time() - self.start_time
-                    elapsed_str = self._format_time(elapsed_time)
-                    # 如果有设置合成总数，显示已合成数量
-                    if self._total_videos > 0:
-                        message = f"{message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
-                    else:
-                        message = f"{message} (已用时间: {elapsed_str})"
+                elapsed_time = time.time() - self.start_time
+                elapsed_str = self._format_time(elapsed_time)
+                # 如果有设置合成总数，显示已合成数量
+                if self._total_videos > 0:
+                    message = f"{message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
+                else:
+                    message = f"{message} (已用时间: {elapsed_str})"
                 
                 # 保存最后一次进度信息，用于定时器重发
                 self._last_progress_message = message
@@ -290,25 +295,43 @@ class VideoProcessor:
         def _timer_func():
             while not self.stop_requested:
                 try:
-                    # 每5秒重发一次最后的进度信息
-                    if self._last_progress_message and self.progress_callback:
-                        # 重新添加时间信息
-                        if self.start_time > 0:
-                            elapsed_time = time.time() - self.start_time
-                            elapsed_str = self._format_time(elapsed_time)
+                    # 确保start_time已设置
+                    if self.start_time == 0:
+                        self.start_time = time.time()
+                    
+                    elapsed_time = time.time() - self.start_time
+                    elapsed_str = self._format_time(elapsed_time)
+                    
+                    # 即使没有上次进度信息，也尝试更新时间信息
+                    if self.progress_callback:
+                        if self._last_progress_message:
+                            # 如果有最后的进度消息，提取基础消息部分
                             base_message = self._last_progress_message.split('(已用时间')[0].strip()
-                            # 如果有设置合成总数，显示已合成数量
-                            if self._total_videos > 0:
-                                message = f"{base_message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
-                            else:
-                                message = f"{base_message} (已用时间: {elapsed_str})"
-                            self.progress_callback(message, self._last_progress_percent)
-                            logger.debug(f"定时重发进度: {self._last_progress_percent:.1f}%: {message}")
+                            if not base_message:
+                                base_message = "处理中..."
+                        else:
+                            # 如果没有最后进度消息，使用默认消息
+                            base_message = "处理中..."
+                        
+                        # 构建包含时间信息的消息
+                        if self._total_videos > 0:
+                            message = f"{base_message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
+                        else:
+                            message = f"{base_message} (已用时间: {elapsed_str})"
+                        
+                        # 进度百分比，如果没有最后的进度，使用默认值50
+                        percent = self._last_progress_percent if self._last_progress_percent > 0 else 50
+                        
+                        # 发送更新
+                        self.progress_callback(message, percent)
+                        logger.debug(f"定时更新进度: {percent:.1f}%: {message}")
                 except Exception as e:
                     logger.error(f"进度定时器出错: {str(e)}")
+                    error_detail = traceback.format_exc()
+                    logger.error(f"详细错误信息: {error_detail}")
                 
-                # 睡眠15秒
-                time.sleep(15)
+                # 睡眠5秒，减少刷新频率以使界面更稳定
+                time.sleep(5)
         
         # 创建并启动定时器线程
         self._progress_timer = threading.Thread(target=_timer_func, daemon=True)
@@ -337,9 +360,13 @@ class VideoProcessor:
         Returns:
             Tuple[List[str], str]: 生成的视频路径列表和总处理时间
         """
+        # 确保设置开始时间
         self.start_time = time.time()
         self._total_videos = count
         self._completed_videos = 0
+        
+        # 启动进度定时器
+        self._start_progress_timer()
         
         # 记录开始时间
         batch_start_time = time.time()
@@ -1297,7 +1324,13 @@ class VideoProcessor:
             str: 处理后的视频路径，失败时返回None
         """
         logger.info(f"开始处理单个视频 {output_path}")
-
+        
+        # 确保设置开始时间（如果尚未设置）
+        if self.start_time == 0:
+            self.start_time = time.time()
+            # 启动进度定时器
+            self._start_progress_timer()
+        
         # 处理输出路径 - 在Windows上使用短路径格式以避免Unicode问题
         if os.name == 'nt':
             try:
