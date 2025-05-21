@@ -109,7 +109,7 @@
   "save_dir": "",
   "resolution": "竖屏 1080x1920",
   "bitrate": 5000,
-  "original_bitrate": false,
+  "original_bitrate": true,
   "transition": "不使用转场",
   "gpu": "Nvidia显卡",
   "encode_mode": "快速模式(不重编码)",
