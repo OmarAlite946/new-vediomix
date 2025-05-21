@@ -21,6 +21,7 @@ import tempfile
 import platform
 import re
 import sys
+import gc  # 添加gc模块导入
 from pathlib import Path
 from enum import Enum
 from typing import Dict, List, Any, Tuple, Callable, Optional, Union, TypeVar, cast
@@ -130,6 +131,10 @@ class VideoProcessor:
         
         # 确保临时目录存在
         os.makedirs(self.settings["temp_dir"], exist_ok=True)
+        
+        # 用于记录已使用的视频和配音
+        self.used_videos_by_folder = {}  # 每个文件夹的已使用视频记录
+        self.used_audios_by_folder = {}  # 每个文件夹的已使用配音记录
         
         # 初始化随机数生成器
         random.seed(time.time())
@@ -1456,9 +1461,8 @@ class VideoProcessor:
                 scene_audio_file = None
                 
                 if scene_audios_list:
-                    # 随机选择一个音频文件
-                    import random
-                    selected_audio = random.choice(scene_audios_list)
+                    # 使用新方法随机选择一个音频文件
+                    selected_audio = self._get_random_audio(scene["key"], scene_audios_list)
                     scene_audio_duration = selected_audio.get("duration", 0)
                     scene_audio_file = selected_audio.get("path")
                     logger.info(f"场景 {i+1} 选择配音: {os.path.basename(scene_audio_file)}, 时长: {scene_audio_duration:.2f}秒")
@@ -1483,21 +1487,56 @@ class VideoProcessor:
                     self.report_progress(f"多视频混剪: 随机选择多个视频片段", scene_progress_start + 10)
                     
                     if scene_videos_list:
-                        # 随机打乱视频列表
-                        import random
-                        shuffled_videos = list(scene_videos_list)
-                        random.shuffle(shuffled_videos)
+                        # 重置随机种子以确保随机性
+                        random.seed(time.time() + random.random())
+                        
+                        # 初始化文件夹视频使用记录
+                        if scene["key"] not in self.used_videos_by_folder:
+                            self.used_videos_by_folder[scene["key"]] = set()
+                        
+                        # 获取该文件夹已使用的视频
+                        used_videos = self.used_videos_by_folder[scene["key"]]
+                        
+                        # 将视频列表随机打乱
+                        all_videos = list(scene_videos_list)
+                        random.shuffle(all_videos)
+                        
+                        # 创建可供选择的视频列表
+                        available_videos = all_videos.copy()
                         
                         # 选择视频直到总时长超过音频时长
                         selected_videos = []
                         total_video_duration = 0
                         
-                        for video in shuffled_videos:
-                            video_duration = video.get("duration", 0)
-                            selected_videos.append(video)
+                        while total_video_duration < scene_audio_duration and available_videos:
+                            # 找出未使用的视频
+                            unused_videos = [v for v in available_videos if v.get("path") not in used_videos]
+                            
+                            # 如果没有未使用的视频，重置使用记录
+                            if not unused_videos:
+                                logger.info(f"场景 {i+1} 所有视频已用过一轮，重新开始")
+                                used_videos.clear()
+                                unused_videos = available_videos
+                            
+                            # 随机选择一个未使用的视频
+                            selected_video = random.choice(unused_videos)
+                            video_duration = selected_video.get("duration", 0)
+                            
+                            # 添加到已选择列表和已使用记录
+                            selected_videos.append(selected_video)
+                            used_videos.add(selected_video.get("path"))
+                            
+                            # 从可用列表中移除已选择的视频
+                            available_videos = [v for v in available_videos if v.get("path") != selected_video.get("path")]
+                            
+                            # 累加时长
                             total_video_duration += video_duration
-                            if total_video_duration >= scene_audio_duration:
-                                break
+                            
+                            logger.info(f"为场景{i+1}选择视频: {os.path.basename(selected_video.get('path'))}, "
+                                       f"累计时长: {total_video_duration:.2f}/{scene_audio_duration:.2f}秒")
+                        
+                        # 更新已使用视频记录
+                        self.used_videos_by_folder[scene["key"]] = used_videos
                         
                         if not selected_videos:
                             logger.warning(f"场景 {i+1} 没有找到足够的视频，跳过")
@@ -1505,8 +1544,6 @@ class VideoProcessor:
                             continue
                         
                         logger.info(f"为场景{i+1} 选择{len(selected_videos)} 个视频，总时长{total_video_duration:.2f}秒")
-                        
-                        self.report_progress(f"准备合成: 处理 {len(selected_videos)} 个视频片段", scene_progress_start + 15)
                         
                         # 创建concat文件
                         concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
@@ -1639,17 +1676,14 @@ class VideoProcessor:
                     logger.info(f"场景 {i+1} 使用单视频模式 配音时长 {scene_audio_duration:.2f}秒")
                     
                     if scene_videos_list:
-                        # 过滤出时长大于等于音频时长的视频
-                        suitable_videos = [v for v in scene_videos_list if v.get("duration", 0) >= scene_audio_duration]
+                        # 使用新方法随机选择一个足够长的视频
+                        selected_video = self._get_random_video(scene["key"], scene_videos_list, scene_audio_duration)
                         
-                        # 如果没有足够长的视频，使用所有视频
-                        if not suitable_videos:
-                            logger.warning(f"场景 {i+1} 没有足够长的视频，使用所有视频")
-                            suitable_videos = scene_videos_list
-                        
-                        # 随机选择一个视频
-                        import random
-                        selected_video = random.choice(suitable_videos)
+                        # 如果没有找到足够长的视频，会返回最接近的视频，但可能时长不足
+                        if not selected_video:
+                            logger.warning(f"场景 {i+1} 没有找到任何视频，跳过")
+                            continue
+                            
                         video_file = selected_video["path"]
                         video_duration = selected_video.get("duration", 0)
                         
@@ -1657,156 +1691,63 @@ class VideoProcessor:
                         if video_duration < scene_audio_duration * 0.5:
                             logger.warning(f"场景 {i+1} 所选视频时长({video_duration:.2f}秒)不足配音时长的一半({scene_audio_duration:.2f}秒)，强制切换到多视频模式")
                             
-                            # 以下代码实现多视频模式，类似于上面的多视频处理逻辑
-                            # 随机打乱视频列表
-                            shuffled_videos = list(scene_videos_list)
-                            random.shuffle(shuffled_videos)
+                            # 重置随机种子以确保随机性
+                            random.seed(time.time() + random.random())
                             
-                            # 选择视频直到总时长超过音频时长
-                            selected_videos = []
-                            total_video_duration = 0
+                            # 初始化文件夹视频使用记录
+                            if scene["key"] not in self.used_videos_by_folder:
+                                self.used_videos_by_folder[scene["key"]] = set()
                             
-                            for video in shuffled_videos:
-                                video_duration = video.get("duration", 0)
-                                selected_videos.append(video)
-                                total_video_duration += video_duration
-                                if total_video_duration >= scene_audio_duration:
-                                    break
+                            # 获取该文件夹已使用的视频
+                            used_videos = self.used_videos_by_folder[scene["key"]]
                             
-                            if not selected_videos:
-                                logger.warning(f"场景 {i+1} 没有找到足够的视频，跳过")
-                                self.report_progress(f"警告: 场景 {i+1} 没有找到足够的视频", scene_progress_start + 15)
-                                continue
+                            # 将视频列表随机打乱
+                            all_videos = list(scene_videos_list)
+                            random.shuffle(all_videos)
                             
-                            logger.info(f"为场景{i+1} 选择{len(selected_videos)} 个视频，总时长{total_video_duration:.2f}秒")
+                            # 创建可供选择的视频列表，已经选择的视频不再考虑
+                            available_videos = [v for v in all_videos if v.get("path") != video_file]
                             
-                            # 创建concat文件
-                            concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
-                            scene_concat_files.append(concat_file_path)
+                            # 已选择的第一个视频
+                            selected_videos = [selected_video]
+                            total_video_duration = video_duration
                             
-                            with open(concat_file_path, 'w', encoding='utf-8') as concat_file:
-                                # 写入除最后一个视频外的所有视频（不裁剪）
-                                for j, video in enumerate(selected_videos[:-1]):
-                                    video_file = video["path"]
-                                    if not isinstance(video_file, str):
-                                        video_file = str(video_file)
-                                    video_file_escaped = video_file.replace("'", "\\'")
-                                    concat_file.write(f"file '{video_file_escaped}'\n")
+                            # 记录已使用
+                            used_videos.add(video_file)
+                            
+                            # 继续选择视频直到总时长超过音频时长
+                            while total_video_duration < scene_audio_duration and available_videos:
+                                # 找出未使用的视频
+                                unused_videos = [v for v in available_videos if v.get("path") not in used_videos]
                                 
-                                # 处理最后一个视频 - 如果需要裁剪
-                                if selected_videos:
-                                    last_video = selected_videos[-1]
-                                    last_video_path = last_video["path"]
-                                    if not isinstance(last_video_path, str):
-                                        last_video_path = str(last_video_path)
-                                    
-                                    # 计算最后一个视频应该的时长
-                                    previous_videos_duration = sum(v.get("duration", 0) for v in selected_videos[:-1])
-                                    last_video_needed_duration = scene_audio_duration - previous_videos_duration
-                                    
-                                    # 如果需要裁剪最后一个视频（只有当需要裁剪的时长小于视频原始时长）
-                                    last_video_duration = last_video.get("duration", 0)
-                                    
-                                    if 0 < last_video_needed_duration < last_video_duration:
-                                        # 裁剪最后一个视频
-                                        trimmed_last_video = os.path.join(temp_dir, f"trimmed_last_video_{i+1}.mp4")
-                                        
-                                        # 使用FFmpeg裁剪（不改变速度，只裁剪时长）
-                                        trim_cmd = [
-                                            self._get_ffmpeg_cmd(),
-                                            "-y",
-                                            "-i", last_video_path,
-                                            "-t", str(last_video_needed_duration + 0.1),  # 添加0.1秒缓冲
-                                            "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
-                                            "-r", "30",  # 强制使用30fps的输出帧率
-                                            "-fflags", "+genpts",  # 生成准确的时间戳
-                                            "-avoid_negative_ts", "make_zero",  # 避免负时间戳
-                                            "-max_muxing_queue_size", "1024",  # 增加复用队列大小
-                                            "-c:v", "copy",  # 不重新编码视频
-                                            "-c:a", "copy",  # 不重新编码音频
-                                            trimmed_last_video
-                                        ]
-                                        
-                                        try:
-                                            logger.info(f"裁剪最后一个视频到 {last_video_needed_duration:.2f}秒 {' '.join(trim_cmd)}")
-                                            subprocess.run(trim_cmd, check=True)
-                                            
-                                            # 在concat文件中使用裁剪后的视频
-                                            trimmed_path_escaped = trimmed_last_video.replace("'", "\\'")
-                                            concat_file.write(f"file '{trimmed_path_escaped}'\n")
-                                        except Exception as e:
-                                            logger.warning(f"裁剪最后一个视频失败: {str(e)}，使用原始视频")
-                                            video_file_escaped = last_video_path.replace("'", "\\'")
-                                            concat_file.write(f"file '{video_file_escaped}'\n")
-                                    else:
-                                        # 不需要裁剪，直接使用原始视频
-                                        video_file_escaped = last_video_path.replace("'", "\\'")
-                                        concat_file.write(f"file '{video_file_escaped}'\n")
-                            
-                            # 执行拼接，生成场景视频
-                            concat_cmd = [
-                                self._get_ffmpeg_cmd(),
-                                "-y",
-                                "-f", "concat",
-                                "-safe", "0",
-                                "-i", concat_file_path,
-                                "-c", "copy"  # 直接复制，不重新编码
-                            ]
-                            
-                            # 如果有音频，替换音频
-                            if scene_audio_file:
-                                # 先拼接视频到临时文件
-                                temp_video = os.path.join(temp_dir, f"temp_scene_{i+1}.mp4")
-                                concat_cmd.append(temp_video)
+                                # 如果没有未使用的视频，重置使用记录
+                                if not unused_videos:
+                                    logger.info(f"场景 {i+1} 所有视频已用过一轮，重新开始")
+                                    used_videos.clear()
+                                    # 保留已选的视频仍然标记为已使用
+                                    for v in selected_videos:
+                                        used_videos.add(v.get("path"))
+                                    unused_videos = available_videos
                                 
-                                try:
-                                    logger.info(f"拼接视频: {' '.join(concat_cmd)}")
-                                    subprocess.run(concat_cmd, check=True)
-                                    
-                                    # 替换音频
-                                    audio_cmd = [
-                                        self._get_ffmpeg_cmd(),
-                                        "-y",
-                                        "-i", temp_video,  # 视频输入
-                                        "-i", scene_audio_file,  # 音频输入
-                                        "-map", "0:v:0",  # 使用第一个输入的视频
-                                        "-map", "1:a:0",  # 使用第二个输入的音频
-                                        "-c:v", "copy",  # 不重新编码视频
-                                        "-c:a", "aac",  # 音频转AAC格式（兼容性好）
-                                        "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
-                                        "-r", "30",  # 强制使用30fps的输出帧率
-                                        "-fflags", "+genpts",  # 生成准确的时间戳
-                                        "-avoid_negative_ts", "make_zero",  # 避免负时间戳
-                                        "-max_muxing_queue_size", "1024",  # 增加复用队列大小
-                                        "-async", "1",  # 音频同步处理
-                                        "-t", str(scene_audio_duration + 0.1),  # 添加0.1秒缓冲
-                                        scene_output
-                                    ]
-                                    
-                                    logger.info(f"替换音频: {' '.join(audio_cmd)}")
-                                    subprocess.run(audio_cmd, check=True)
-                                    
-                                    # 添加到场景视频列表
-                                    scene_videos.append(scene_output)
-                                    logger.info(f"场景 {i+1} 处理完成")
-                                except Exception as e:
-                                    logger.error(f"处理场景 {i+1} 失败: {str(e)}")
-                            else:
-                                # 没有音频，直接输出到场景视频文件
-                                concat_cmd.append(scene_output)
+                                # 随机选择一个未使用的视频
+                                next_video = random.choice(unused_videos)
+                                next_duration = next_video.get("duration", 0)
                                 
-                                try:
-                                    logger.info(f"拼接视频: {' '.join(concat_cmd)}")
-                                    subprocess.run(concat_cmd, check=True)
-                                    
-                                    # 添加到场景视频列表
-                                    scene_videos.append(scene_output)
-                                    logger.info(f"场景 {i+1} 处理完成")
-                                except Exception as e:
-                                    logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                                # 添加到已选择列表和已使用记录
+                                selected_videos.append(next_video)
+                                used_videos.add(next_video.get("path"))
+                                
+                                # 从可用列表中移除已选择的视频
+                                available_videos = [v for v in available_videos if v.get("path") != next_video.get("path")]
+                                
+                                # 累加时长
+                                total_video_duration += next_duration
+                                
+                                logger.info(f"为场景{i+1}选择额外视频: {os.path.basename(next_video.get('path'))}, "
+                                           f"累计时长: {total_video_duration:.2f}/{scene_audio_duration:.2f}秒")
                             
-                            # 跳过常规单视频模式处理
-                            continue
+                            # 更新已使用视频记录
+                            self.used_videos_by_folder[scene["key"]] = used_videos
                         
                         logger.info(f"为场景{i+1} 选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
                         
@@ -2017,11 +1958,10 @@ class VideoProcessor:
         获取FFmpeg命令
         
         Returns:
-            str: FFmpeg命令路径
+            str: FFmpeg命令
         """
         ffmpeg_cmd = "ffmpeg"
         
-        # 尝试从ffmpeg_path.txt读取自定义路径
         try:
             # 获取项目根目录
             project_root = Path(__file__).resolve().parent.parent.parent
@@ -2031,13 +1971,117 @@ class VideoProcessor:
                 with open(ffmpeg_path_file, 'r', encoding="utf-8") as f:
                     custom_path = f.read().strip()
                     if custom_path and os.path.exists(custom_path):
-                        logger.debug(f"使用自定义FFmpeg路径: {custom_path}")
-                        return custom_path
+                        ffmpeg_cmd = custom_path
         except Exception as e:
-            logger.warning(f"读取自定义FFmpeg路径时出错: {str(e)}")
+            logger.error(f"读取自定义FFmpeg路径时出错: {str(e)}")
         
         return ffmpeg_cmd
 
+    def _get_random_video(self, folder_key: str, videos_list: List[Dict], min_duration: float = 0):
+        """
+        从视频列表中随机选择一个视频，并实现"用完一轮再重新开始随机"的策略
+        
+        Args:
+            folder_key: 文件夹标识，用于区分不同场景
+            videos_list: 视频信息列表
+            min_duration: 最小时长要求，为0则不限制
+            
+        Returns:
+            Dict: 选中的视频信息
+        """
+        # 每次选择时重新设置随机种子，确保随机性
+        random.seed(time.time() + random.random())
+        
+        # 确保文件夹的已使用视频记录存在
+        if folder_key not in self.used_videos_by_folder:
+            self.used_videos_by_folder[folder_key] = set()
+        
+        used_videos = self.used_videos_by_folder[folder_key]
+        
+        # 过滤出满足时长要求的视频
+        suitable_videos = []
+        if min_duration > 0:
+            suitable_videos = [v for v in videos_list if v.get("duration", 0) >= min_duration]
+            if not suitable_videos:
+                logger.warning(f"没有找到时长大于{min_duration}秒的视频，使用所有视频")
+                suitable_videos = videos_list
+        else:
+            suitable_videos = videos_list
+        
+        if not suitable_videos:
+            logger.warning(f"没有可用的视频，返回None")
+            return None
+        
+        # 将视频路径转换为集合，方便查找
+        all_video_paths = {v.get("path") for v in suitable_videos}
+        
+        # 找出未使用的视频
+        unused_video_paths = all_video_paths - used_videos
+        
+        if unused_video_paths:
+            # 还有未使用的视频，从中随机选择
+            unused_videos = [v for v in suitable_videos if v.get("path") in unused_video_paths]
+            selected_video = random.choice(unused_videos)
+            logger.info(f"从{len(unused_videos)}个未使用视频中随机选择")
+        else:
+            # 所有视频都已使用过，重新开始，清空记录并随机选择
+            self.used_videos_by_folder[folder_key].clear()
+            selected_video = random.choice(suitable_videos)
+            logger.info(f"所有视频已用完一轮，重新开始随机选择")
+        
+        # 记录已使用的视频
+        self.used_videos_by_folder[folder_key].add(selected_video.get("path"))
+        logger.info(f"选中视频: {os.path.basename(selected_video.get('path'))}, 时长: {selected_video.get('duration', 0):.2f}秒")
+        
+        return selected_video
+    
+    def _get_random_audio(self, folder_key: str, audios_list: List[Dict]):
+        """
+        从音频列表中随机选择一个音频，并实现"用完一轮再重新开始随机"的策略
+        
+        Args:
+            folder_key: 文件夹标识，用于区分不同场景
+            audios_list: 音频信息列表
+            
+        Returns:
+            Dict: 选中的音频信息
+        """
+        # 每次选择时重新设置随机种子，确保随机性
+        random.seed(time.time() + random.random())
+        
+        if not audios_list:
+            logger.warning(f"没有可用的音频，返回None")
+            return None
+            
+        # 确保文件夹的已使用音频记录存在
+        if folder_key not in self.used_audios_by_folder:
+            self.used_audios_by_folder[folder_key] = set()
+        
+        used_audios = self.used_audios_by_folder[folder_key]
+        
+        # 将音频路径转换为集合，方便查找
+        all_audio_paths = {a.get("path") for a in audios_list}
+        
+        # 找出未使用的音频
+        unused_audio_paths = all_audio_paths - used_audios
+        
+        if unused_audio_paths:
+            # 还有未使用的音频，从中随机选择
+            unused_audios = [a for a in audios_list if a.get("path") in unused_audio_paths]
+            selected_audio = random.choice(unused_audios)
+            logger.info(f"从{len(unused_audios)}个未使用音频中随机选择")
+        else:
+            # 所有音频都已使用过，重新开始，清空记录并随机选择
+            self.used_audios_by_folder[folder_key].clear()
+            selected_audio = random.choice(audios_list)
+            logger.info(f"所有音频已用完一轮，重新开始随机选择")
+        
+        # 记录已使用的音频
+        self.used_audios_by_folder[folder_key].add(selected_audio.get("path"))
+        logger.info(f"选中音频: {os.path.basename(selected_audio.get('path'))}, 时长: {selected_audio.get('duration', 0):.2f}秒")
+        
+        return selected_audio
+    
     def _resolve_shortcut(self, shortcut_path):
         """
         解析Windows快捷方式(.lnk)，获取目标路径
