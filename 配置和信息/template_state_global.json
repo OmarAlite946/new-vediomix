@@ -1,0 +1,28 @@
+{
+    "templates": [
+        {
+            "name": "默认模板",
+            "description": "标准视频处理模板",
+            "resolution": "竖屏 1080x1920",
+            "bitrate": 5000,
+            "transition": "不使用转场",
+            "audio_mode": "自动识别",
+            "is_default": true,
+            "created_at": "2023-01-01T00:00:00",
+            "last_used": "2023-01-01T00:00:00"
+        },
+        {
+            "name": "横屏高清",
+            "description": "横屏高清视频模板",
+            "resolution": "横屏 1920x1080",
+            "bitrate": 8000,
+            "transition": "淡入淡出",
+            "audio_mode": "自动识别",
+            "is_default": false,
+            "created_at": "2023-01-01T00:00:00",
+            "last_used": "2023-01-01T00:00:00"
+        }
+    ],
+    "last_selected_template": "默认模板",
+    "custom_templates_enabled": true
+} 

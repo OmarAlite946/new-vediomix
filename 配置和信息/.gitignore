@@ -1,8 +1,11 @@
-# 排除所有实例特定的配置文件
-user_settings_*.json
-!user_settings_global.json
+# 不再排除任何配置文件，所有配置文件都将被Git管理
+# 之前的排除规则已被注释掉
+# user_settings_*.json
+# !user_settings_global.json
 
-# 排除所有备份文件
-*.bak
-*.bak.*
+# 不再排除备份文件，所有备份文件都将被Git管理
+# *.bak
+# *.bak.*
+
+# 仍然排除临时文件
 *.tmp 

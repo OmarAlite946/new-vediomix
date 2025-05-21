@@ -1,0 +1,18 @@
+{
+    "encoder": "auto",
+    "decoder": "auto",
+    "preset": "medium",
+    "hardware_acceleration": true,
+    "cuda_device": 0,
+    "max_memory_usage": 2048,
+    "thread_count": 4,
+    "enable_nvenc": true,
+    "enable_qsv": true,
+    "enable_amf": true,
+    "enable_vaapi": false,
+    "enable_vdpau": false,
+    "enable_videotoolbox": false,
+    "fallback_to_cpu": true,
+    "force_gpu": false,
+    "gpu_priority": ["nvidia", "intel", "amd"]
+} 

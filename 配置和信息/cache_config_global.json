@@ -1,0 +1,16 @@
+{
+    "cache_dir": "./temp",
+    "max_cache_size_gb": 10,
+    "auto_clean_cache": true,
+    "clean_cache_threshold_gb": 8,
+    "keep_cache_days": 7,
+    "temp_dir": "./temp",
+    "output_dir": "./output",
+    "use_relative_paths": true,
+    "compress_cache": false,
+    "cache_video_previews": true,
+    "cache_audio_previews": true,
+    "cache_thumbnails": true,
+    "thumbnail_quality": 80,
+    "thumbnail_size": [320, 180]
+} 

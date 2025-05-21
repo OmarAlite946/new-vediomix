@@ -1,0 +1,43 @@
+{
+  "import_folder": "E:/视频/素材/高手接话素材/测试配音",
+  "last_material_folders": [
+    {
+      "name": "1.1、a黄金故事（上）前5s",
+      "path": "E:/视频/素材/高手接话素材/测试配音\\1.1、a黄金故事（上）前5s",
+      "extract_mode": "single_video"
+    }
+  ],
+  "folder_extract_modes": {
+    "E:/视频/素材/高手接话素材/测试配音\\1.1、a黄金故事（上）前5s": "single_video"
+  },
+  "save_dir": "E:/视频/成品视频/新软件",
+  "resolution": "竖屏 1080x1920",
+  "bitrate": 5000,
+  "original_bitrate": true,
+  "transition": "不使用转场",
+  "gpu": "Nvidia显卡",
+  "encode_mode": "快速模式(不重编码)",
+  "watermark_enabled": true,
+  "watermark_prefix": "",
+  "watermark_size": 36,
+  "watermark_color": "#FFFFFF",
+  "watermark_position": "右下角",
+  "watermark_pos_x": 10,
+  "watermark_pos_y": 10,
+  "voice_volume": 1.0,
+  "bgm_volume": 0.0,
+  "bgm_path": "",
+  "audio_mode": "配音模式",
+  "generate_count": 10,
+  "cache_dir": "C:\\Users\\ys136\\VideoMixTool\\temp",
+  "last_active_tab": 0,
+  "main_window_size": [
+    1495,
+    632
+  ],
+  "main_window_pos": [
+    0,
+    0
+  ],
+  "last_operation_success": true
+}
