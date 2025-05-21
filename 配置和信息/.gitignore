@@ -1,0 +1,8 @@
+# 排除所有实例特定的配置文件
+user_settings_*.json
+!user_settings_global.json
+
+# 排除所有备份文件
+*.bak
+*.bak.*
+*.tmp 

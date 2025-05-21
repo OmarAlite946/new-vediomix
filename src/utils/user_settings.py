@@ -17,8 +17,20 @@ from typing import Dict, Any, Optional
 # 日志设置
 logger = logging.getLogger(__name__)
 
-# 配置文件路径
-CONFIG_DIR = Path.home() / "VideoMixTool"
+# 获取项目根目录
+def get_project_root() -> Path:
+    """获取项目根目录"""
+    # 从当前文件位置向上查找项目根目录
+    current_file = Path(__file__).resolve()
+    # 向上查找3级目录（src/utils/user_settings.py -> src/utils -> src -> 项目根目录）
+    project_root = current_file.parent.parent.parent
+    return project_root
+
+# 配置文件路径（修改为项目目录）
+PROJECT_ROOT = get_project_root()
+CONFIG_DIR = PROJECT_ROOT / "配置和信息"
+# 确保配置目录存在
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = CONFIG_DIR / "user_settings.json"
 
 # 默认设置
@@ -90,9 +102,9 @@ class UserSettings:
         self._instance_id = None  # 先初始化为None，避免在instance_id setter中调用load_settings时出现问题
         self.instance_id = instance_id or str(uuid.uuid4())[:8]
         
-        # 设置文件路径
-        self.settings_dir = Path(os.path.expanduser("~")) / "VideoMixTool"
-        self.settings_file = self.settings_dir / "user_settings.json"
+        # 设置文件路径（修改为项目目录）
+        self.settings_dir = CONFIG_DIR
+        self.settings_file = self.settings_dir / f"user_settings_{self.instance_id}.json"
         
         # 确保设置目录存在
         self.settings_dir.mkdir(parents=True, exist_ok=True)
@@ -179,8 +191,9 @@ class UserSettings:
     
     def _get_settings_file(self):
         """获取当前实例的设置文件路径"""
+        # 修改为使用项目目录中的配置文件
         if self.instance_id == "global" or self.instance_id.startswith("global_"):
-            return SETTINGS_FILE
+            return CONFIG_DIR / "user_settings_global.json"
         else:
             # 为每个实例创建单独的设置文件，确保文件名有效
             settings_filename = f"user_settings_{self.instance_id}.json"
@@ -201,14 +214,16 @@ class UserSettings:
             settings_file = self._get_settings_file()
             
             # 首先加载全局设置作为基础
-            if not self.instance_id.startswith("global") and SETTINGS_FILE.exists():
+            global_settings_file = CONFIG_DIR / "user_settings_global.json"
+            if not self.instance_id.startswith("global") and global_settings_file.exists():
                 try:
-                    with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                    with open(global_settings_file, 'r', encoding='utf-8') as f:
                         global_settings = json.load(f)
                         # 更新设置，保留默认值
                         for key, value in global_settings.items():
                             if key in self._settings:
                                 self._settings[key] = value
+                    logger.info(f"已从项目目录加载全局设置: {global_settings_file}")
                 except Exception as e:
                     logger.warning(f"加载全局设置作为基础时出错: {e}")
             
@@ -226,7 +241,7 @@ class UserSettings:
                     for key, value in loaded_settings.items():
                         if key in self._settings:
                             self._settings[key] = value
-                logger.info(f"已从 {settings_file} 加载用户设置，实例ID: {self.instance_id}")
+                logger.info(f"已从项目目录加载用户设置: {settings_file}，实例ID: {self.instance_id}")
                 return True
             else:
                 # 如果配置文件不存在，使用全局设置或默认设置
@@ -235,7 +250,7 @@ class UserSettings:
                 else:
                     # 如果是全局设置，创建默认设置文件
                     self._save_settings()
-                    logger.info("创建了默认用户设置文件")
+                    logger.info(f"创建了默认用户设置文件: {settings_file}")
                 return True
         except Exception as e:
             logger.error(f"加载用户设置出错: {e}")
@@ -262,11 +277,11 @@ class UserSettings:
             with open(backup_file, 'w', encoding='utf-8') as f:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"已保存用户设置备份到 {backup_file}")
+            logger.info(f"已保存用户设置备份到项目目录: {backup_file}")
             
             # 清理旧备份文件
             backup_pattern = f"user_settings*.bak.*"
-            backup_files = sorted(Path(CONFIG_DIR).glob(backup_pattern), 
+            backup_files = sorted(CONFIG_DIR.glob(backup_pattern), 
                                 key=lambda x: os.path.getmtime(x),
                                 reverse=True)
             
@@ -274,11 +289,12 @@ class UserSettings:
             for old_file in backup_files[3:]:
                 try:
                     old_file.unlink()
+                    logger.debug(f"删除旧备份文件: {old_file}")
                 except Exception as e:
                     logger.warning(f"删除旧备份文件失败: {e}")
                 
         except Exception as e:
-            logger.error(f"保存用户设置备份失败: {e}")
+            logger.error(f"保存用户设置备份到项目目录失败: {e}")
     
     def _save_settings(self) -> bool:
         """
@@ -311,20 +327,21 @@ class UserSettings:
                     if backup_file.exists():
                         backup_file.unlink()  # 删除旧备份
                     settings_file.rename(backup_file)  # 创建新备份
+                    logger.debug(f"创建设置文件备份: {backup_file}")
                 except Exception as e:
                     logger.warning(f"创建设置文件备份失败: {e}")
                     
             # 重命名临时文件为正式文件
             temp_file.rename(settings_file)
             
-            logger.info(f"已保存用户设置到 {settings_file}，实例ID: {self.instance_id}")
+            logger.info(f"已保存用户设置到项目目录: {settings_file}，实例ID: {self.instance_id}")
             
             # 同时创建一个带时间戳的备份
             self._save_settings_backup()
             
             return True
         except Exception as e:
-            logger.error(f"保存用户设置出错: {e}，实例ID: {self.instance_id}")
+            logger.error(f"保存用户设置到项目目录出错: {e}，实例ID: {self.instance_id}")
             # 尝试保存备份
             self._save_settings_backup()
             return False
