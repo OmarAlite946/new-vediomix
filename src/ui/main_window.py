@@ -15,6 +15,7 @@ import threading
 import logging
 from pathlib import Path
 from typing import Dict, List, Any, Tuple, Callable, Optional, Union
+import re
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, 
@@ -237,6 +238,16 @@ class MainWindow(QMainWindow):
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setMinimumWidth(250)
         
+        # 添加工作日志标签
+        self.label_work_log = QLabel("等待开始...")
+        self.label_work_log.setStyleSheet("color: #666666;")
+        self.label_work_log.setMinimumWidth(250)
+        self.label_work_log.setFixedWidth(350)
+        self.label_work_log.setTextFormat(Qt.PlainText)
+        self.label_work_log.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.label_work_log.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.label_work_log.setWordWrap(False)
+        
         # 分为两个标签：一个用于显示进度信息，一个用于显示时间信息
         self.label_progress = QLabel("等待合成任务...")
         self.label_progress.setStyleSheet("color: #666666;")
@@ -260,6 +271,7 @@ class MainWindow(QMainWindow):
         self.label_time_info.setVisible(False)  # 初始时隐藏
         
         progress_status_layout.addWidget(self.progress_bar)
+        progress_status_layout.addWidget(self.label_work_log)
         progress_status_layout.addWidget(self.label_progress)
         progress_status_layout.addWidget(self.label_time_info)
         
@@ -1199,27 +1211,298 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         if "(已用时间:" in message:
             parts = message.split("(已用时间:", 1)
             base_message = parts[0].strip()
-            time_info = "时间: " + parts[1].replace(")", "").strip()
+            time_info = "已用时间: " + parts[1].replace(")", "").strip()
         elif "(已用时:" in message:
             parts = message.split("(已用时:", 1)
             base_message = parts[0].strip()
-            time_info = "时间: " + parts[1].replace(")", "").strip()
+            time_info = "已用时间: " + parts[1].replace(")", "").strip()
         
-        # 更新主进度标签
-        self.label_progress.setText(base_message)
-        self.label_progress.setToolTip(base_message)
+        # 全局进度信息提取和保存
+        progress_info = ""
         
-        # 更新时间信息标签
-        if time_info:
-            self.label_time_info.setText(time_info)
-            self.label_time_info.setToolTip(time_info)
-            self.label_time_info.setVisible(True)
+        # 从消息中提取视频进度信息(正在生成第X/Y个视频)
+        match = re.search(r"正在生成第\s*(\d+)/(\d+)\s*个", base_message)
+        if match:
+            current_video, total_videos = match.groups()
+            progress_info = f"正在生成第 {current_video}/{total_videos} 个目标视频"
+            self.last_meaningful_progress = progress_info
         else:
-            self.label_time_info.setVisible(False)
+            # 另一种格式
+            match = re.search(r"(\d+)/(\d+)", base_message)
+            if match and ("生成视频" in base_message or "生成第" in base_message):
+                current_video, total_videos = match.groups()
+                progress_info = f"正在生成第 {current_video}/{total_videos} 个目标视频"
+                self.last_meaningful_progress = progress_info
         
-        # 更新进度条值
+        # 处理"处理中..."的特殊情况 - 尝试保持上一个有意义的进度消息
+        if base_message == "处理中..." and hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress:
+            if time_info:
+                self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+            else:
+                self.label_progress.setText(self.last_meaningful_progress)
+            return
+        
+        # 设置简洁的工作日志和进度信息
+        if "正在生成" in base_message and ("目标视频" in base_message or "/" in base_message):
+            # 从消息中提取文件名，如果存在，添加混合视频和音频的信息
+            file_info = ""
+            # 首先尝试使用正则表达式提取视频名称，匹配常见的视频文件名格式
+            video_match = re.search(r'(视频_\d+_\d+_\d+\.mp4|视频_\d+\.mp4|\w+\.mp4)', base_message)
+            if video_match:
+                file_info = video_match.group(0)
+            # 如果上面的方法没有找到，尝试使用冒号分割
+            elif ":" in base_message:
+                parts = base_message.split(":", 1)
+                if len(parts) > 1:
+                    file_info = parts[1].strip()
+            
+            # 决定显示什么信息
+            if file_info:
+                # 如果找到文件名，显示文件处理信息
+                self.label_work_log.setText(f"正在混合视频和音频，应用转场效果到 {file_info}")
+                
+                # 进度标签显示处理进度
+                if progress_info:
+                    if time_info:
+                        self.label_progress.setText(f"{progress_info} · {time_info}")
+                    else:
+                        self.label_progress.setText(progress_info)
+                else:
+                    # 如果没有进度信息，显示文件处理信息
+                    if time_info:
+                        self.label_progress.setText(f"处理文件 {file_info} · {time_info}")
+                    else:
+                        self.label_progress.setText(f"处理文件 {file_info}")
+            else:
+                # 如果没有找到文件名，仅显示进度信息
+                if progress_info:
+                    self.label_work_log.setText(progress_info)
+                    
+                    if time_info:
+                        self.label_progress.setText(f"{progress_info} · {time_info}")
+                    else:
+                        self.label_progress.setText(progress_info)
+                else:
+                    # 如果也没有进度信息，显示通用处理信息
+                    self.label_work_log.setText("正在处理视频")
+                    
+                    if time_info:
+                        self.label_progress.setText(f"视频处理中 · {time_info}")
+                    else:
+                        self.label_progress.setText("视频处理中")
+        elif "准备场景素材" in base_message or "准备素材" in base_message:
+            self.label_work_log.setText("正在分析素材文件结构，准备视频特效和转场资源")
+            
+            # 如果之前保存了生成视频的进度信息，进度标签继续显示这个信息
+            if hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress and "正在生成第" in self.last_meaningful_progress:
+                if time_info:
+                    self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+                else:
+                    self.label_progress.setText(self.last_meaningful_progress)
+            else:
+                if time_info:
+                    self.label_progress.setText(f"准备素材中... · {time_info}")
+                else:
+                    self.label_progress.setText("准备素材中...")
+        elif "应用配音" in base_message or "处理音频" in base_message:
+            # 提取音频文件名
+            audio_file = ""
+            if ".mp3" in base_message:
+                parts = base_message.split(".mp3")
+                if len(parts) > 0:
+                    # 尝试提取文件名
+                    text_parts = parts[0].split()
+                    if text_parts:
+                        audio_file = text_parts[-1] + ".mp3"
+            
+            if audio_file:
+                self.label_work_log.setText(f"正在处理音频，将配音应用到视频片段: {audio_file}")
+            else:
+                self.label_work_log.setText("正在处理音频，将配音与视频同步")
+            
+            # 如果之前保存了生成视频的进度信息，进度标签继续显示这个信息
+            if hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress and "正在生成第" in self.last_meaningful_progress:
+                if time_info:
+                    self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+                else:
+                    self.label_progress.setText(self.last_meaningful_progress)
+            else:
+                if time_info:
+                    self.label_progress.setText(f"处理配音中... · {time_info}")
+                else:
+                    self.label_progress.setText("处理配音中...")
+        elif "多视频混剪" in base_message:
+            # 处理混剪相关的消息
+            self.label_work_log.setText("正在执行多视频混剪，随机选择并组合视频片段")
+            
+            # 如果之前保存了生成视频的进度信息，进度标签继续显示这个信息
+            if hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress and "正在生成第" in self.last_meaningful_progress:
+                if time_info:
+                    self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+                else:
+                    self.label_progress.setText(self.last_meaningful_progress)
+            else:
+                if time_info:
+                    self.label_progress.setText(f"执行视频混剪... · {time_info}")
+                else:
+                    self.label_progress.setText("执行视频混剪...")
+        elif "处理场景" in base_message:
+            # 简化场景处理消息
+            scene_info = ""
+            if ":" in base_message:
+                parts = base_message.split(":")
+                if len(parts) > 1:
+                    scene_info = parts[1].strip()
+            
+            if scene_info:
+                self.label_work_log.setText(f"正在处理场景素材: {scene_info}")
+            else:
+                self.label_work_log.setText("正在处理场景素材，准备混合视频和音频")
+            
+            # 如果之前保存了生成视频的进度信息，进度标签继续显示这个信息
+            if hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress and "正在生成第" in self.last_meaningful_progress:
+                if time_info:
+                    self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+                else:
+                    self.label_progress.setText(self.last_meaningful_progress)
+            else:
+                if time_info:
+                    self.label_progress.setText(f"处理场景中... · {time_info}")
+                else:
+                    self.label_progress.setText("处理场景中...")
+        elif "扫描" in base_message:
+            self.label_work_log.setText("正在扫描素材文件，识别视频和音频格式")
+            
+            # 如果之前保存了生成视频的进度信息，进度标签继续显示这个信息
+            if hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress and "正在生成第" in self.last_meaningful_progress:
+                if time_info:
+                    self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+                else:
+                    self.label_progress.setText(self.last_meaningful_progress)
+            else:
+                if time_info:
+                    self.label_progress.setText(f"扫描素材中... · {time_info}")
+                else:
+                    self.label_progress.setText("扫描素材中...")
+        elif "处理完成" in base_message or "成功生成" in base_message:
+            # 处理完成消息格式的统一处理
+            match = re.search(r"(\d+)/(\d+)", base_message)
+            if match:
+                completed_videos, total_videos = match.groups()
+                self.label_work_log.setText(f"处理完成，已生成 {completed_videos}/{total_videos} 个视频")
+                
+                if time_info:
+                    self.label_progress.setText(f"处理完成 {completed_videos}/{total_videos} · {time_info}")
+                else:
+                    self.label_progress.setText(f"处理完成 {completed_videos}/{total_videos}")
+            else:
+                self.label_work_log.setText("正在完成最终处理，输出视频文件")
+                
+                if time_info:
+                    self.label_progress.setText(f"处理完成 · {time_info}")
+                else:
+                    self.label_progress.setText("处理完成")
+        elif "错误" in base_message:
+            # 错误消息保持简洁
+            self.label_work_log.setText(f"处理过程中遇到错误: {base_message}")
+            if time_info:
+                self.label_progress.setText(f"处理出错 · {time_info}")
+            else:
+                self.label_progress.setText("处理出错")
+        elif "正在生成第" in base_message and "/" in base_message:
+            # 提取视频序号和总数
+            match = re.search(r"正在生成第\s*(\d+)/(\d+)\s*个", base_message)
+            if match:
+                current_video, total_videos = match.groups()
+                progress_info = f"正在生成第 {current_video}/{total_videos} 个目标视频"
+                # 保存进度信息以便其他处理步骤使用
+                self.last_meaningful_progress = progress_info
+                
+                self.label_work_log.setText(progress_info)
+                
+                # 同步显示相同的文本到进度标签
+                if time_info:
+                    self.label_progress.setText(f"{progress_info} · {time_info}")
+                else:
+                    self.label_progress.setText(progress_info)
+            else:
+                # 如果没有匹配成功，使用整个消息
+                self.label_work_log.setText(base_message)
+                if time_info:
+                    self.label_progress.setText(f"{base_message} · {time_info}")
+                else:
+                    self.label_progress.setText(base_message)
+                    
+        elif "生成视频" in base_message and "/" in base_message:
+            # 提取视频序号和总数的另一种格式
+            match = re.search(r"(\d+)/(\d+)", base_message)
+            if match:
+                current_video, total_videos = match.groups()
+                progress_info = f"正在生成第 {current_video}/{total_videos} 个目标视频"
+                # 保存进度信息以便其他处理步骤使用
+                self.last_meaningful_progress = progress_info
+                
+                self.label_work_log.setText(progress_info)
+                
+                # 同步显示相同的文本到进度标签
+                if time_info:
+                    self.label_progress.setText(f"{progress_info} · {time_info}")
+                else:
+                    self.label_progress.setText(progress_info)
+            else:
+                # 如果没有匹配成功，使用整个消息
+                self.label_work_log.setText(base_message)
+                if time_info:
+                    self.label_progress.setText(f"{base_message} · {time_info}")
+                else:
+                    self.label_progress.setText(base_message)
+                    
+        elif "混合视频和音频" in base_message:
+            # 从消息中提取视频文件名
+            video_name = ""
+            match = re.search(r"应用转场效果到\s*(.*?)(?:\s*\(|$)", base_message)
+            if match:
+                video_name = match.group(1).strip()
+            
+            # 工作日志显示文件处理信息
+            if video_name:
+                self.label_work_log.setText(f"正在混合视频和音频，应用转场效果到 {video_name}")
+            else:
+                self.label_work_log.setText("正在混合视频和音频，应用转场效果")
+            
+            # 如果之前保存了生成视频的进度信息，进度标签使用这个信息
+            if hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress and "正在生成第" in self.last_meaningful_progress:
+                if time_info:
+                    self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+                else:
+                    self.label_progress.setText(self.last_meaningful_progress)
+            else:
+                # 否则使用默认的混合视频和音频信息
+                if time_info:
+                    self.label_progress.setText(f"混合视频和音频 · {time_info}")
+                else:
+                    self.label_progress.setText("混合视频和音频")
+        else:
+            # 默认情况提供基本信息
+            self.label_work_log.setText(f"正在执行视频处理: {base_message}")
+            
+            # 如果之前保存了生成视频的进度信息，进度标签继续显示这个信息
+            if hasattr(self, 'last_meaningful_progress') and self.last_meaningful_progress and "正在生成第" in self.last_meaningful_progress:
+                if time_info:
+                    self.label_progress.setText(f"{self.last_meaningful_progress} · {time_info}")
+                else:
+                    self.label_progress.setText(self.last_meaningful_progress)
+            else:
+                if time_info:
+                    self.label_progress.setText(f"处理中... · {time_info}")
+                else:
+                    self.label_progress.setText("处理中...")
+        
+        # 隐藏不需要的时间信息标签
+        self.label_time_info.setVisible(False)
+        
+        # 更新进度条
         self.progress_bar.setValue(int(percent))
-        # 更新上次进度更新时间戳
         self.last_progress_update = time.time()
     
     def detect_gpu(self):

@@ -2,27 +2,28 @@
 # -*- coding: utf-8 -*-
 
 """
-视频处理核心模块
+视频处理核心类
 """
 
 import os
+import json
 import time
-import random
-import shutil
+import uuid
 import subprocess
 import threading
-import re
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any, Optional, Tuple, Callable
-import uuid
 import datetime
-import logging
-import sys
-import json
-import gc
-import traceback
 import glob
+import random
+import shutil
+import logging
+import traceback
+import tempfile
+import platform
+import re
+import sys
+from pathlib import Path
+from enum import Enum
+from typing import Dict, List, Any, Tuple, Callable, Optional, Union, TypeVar, cast
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -256,20 +257,25 @@ class VideoProcessor:
                 # 如果处理已经开始，添加已用时间
                 elapsed_time = time.time() - self.start_time
                 elapsed_str = self._format_time(elapsed_time)
-                # 如果有设置合成总数，显示已合成数量
-                if self._total_videos > 0:
-                    message = f"{message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
-                else:
-                    message = f"{message} (已用时间: {elapsed_str})"
+                
+                # 确保消息格式一致，特别是"正在生成第X/Y个目标视频"格式
+                msg_to_send = message
+                if "正在生成第" in message and "/" in message:
+                    # 尝试提取X/Y部分，重新格式化以保持一致
+                    match = re.search(r"正在生成第\s*(\d+)/(\d+)\s*个", message)
+                    if match:
+                        x, y = match.groups()
+                        msg_to_send = f"正在生成第 {x}/{y} 个目标视频"
+                
+                # 添加时间信息
+                message_with_time = f"{msg_to_send} (已用时间: {elapsed_str})"
                 
                 # 保存最后一次进度信息，用于定时器重发
-                self._last_progress_message = message
+                self._last_progress_message = message_with_time
                 self._last_progress_percent = percent
                 
                 # 进度更新应该在主线程中进行
-                # 这个回调通常是通过Qt的信号槽机制连接的，
-                # 它会自动处理跨线程调用
-                self.progress_callback(message, percent)
+                self.progress_callback(message_with_time, percent)
             except Exception as e:
                 logger.error(f"调用进度回调时出错: {str(e)}")
         
@@ -302,29 +308,27 @@ class VideoProcessor:
                     elapsed_time = time.time() - self.start_time
                     elapsed_str = self._format_time(elapsed_time)
                     
-                    # 即使没有上次进度信息，也尝试更新时间信息
+                    # 简化定时器发送的消息格式
                     if self.progress_callback:
                         if self._last_progress_message:
                             # 如果有最后的进度消息，提取基础消息部分
-                            base_message = self._last_progress_message.split('(已用时间')[0].strip()
-                            if not base_message:
-                                base_message = "处理中..."
+                            if "(已用时间:" in self._last_progress_message:
+                                base_message = self._last_progress_message.split('(已用时间:')[0].strip()
+                            else:
+                                base_message = self._last_progress_message
                         else:
                             # 如果没有最后进度消息，使用默认消息
                             base_message = "处理中..."
                         
-                        # 构建包含时间信息的消息
-                        if self._total_videos > 0:
-                            message = f"{base_message} (已用时间: {elapsed_str}, 已合并 {self._completed_videos}/{self._total_videos})"
-                        else:
-                            message = f"{base_message} (已用时间: {elapsed_str})"
+                        # 简化消息格式，只添加时间信息
+                        message = f"{base_message} (已用时间: {elapsed_str})"
                         
                         # 进度百分比，如果没有最后的进度，使用默认值50
                         percent = self._last_progress_percent if self._last_progress_percent > 0 else 50
                         
                         # 发送更新
                         self.progress_callback(message, percent)
-                        logger.debug(f"定时更新进度: {percent:.1f}%: {message}")
+                        logger.debug(f"定时更新进度: {percent:.1f}%")
                 except Exception as e:
                     logger.error(f"进度定时器出错: {str(e)}")
                     error_detail = traceback.format_exc()
@@ -378,8 +382,8 @@ class VideoProcessor:
         output_videos = []
         
         try:
-            # 扫描素材文件...
-            self.report_progress("扫描素材文件...", 1)
+            # 扫描素材文件
+            self.report_progress("扫描素材文件", 1)
             
             # 优化：使用轻量级扫描，只获取文件路径，不读取元数据
             material_data = self._scan_material_folders(material_folders)
@@ -410,7 +414,8 @@ class VideoProcessor:
                 output_filename = f"视频_{timestamp}_{i+1}.mp4"
                 output_path = os.path.join(output_dir, output_filename)
                 
-                self.report_progress(f"处理视频 {i+1}/{count}: {output_filename}", progress_start)
+                # 格式统一的进度消息
+                self.report_progress(f"正在生成第 {i+1}/{count} 个目标视频", progress_start)
                 
                 try:
                     # 处理单个视频
@@ -442,7 +447,8 @@ class VideoProcessor:
             success_rate = (len(output_videos) / count) * 100 if count > 0 else 0
             logger.info(f"批量处理完成，成功率: {success_rate:.1f}%, 总用时: {formatted_time}")
             
-            self.report_progress(f"批量处理完成，成功生成{len(output_videos)}/{count} 个视频", 100)
+            # 使用统一格式的完成消息
+            self.report_progress(f"处理完成，已生成 {len(output_videos)}/{count} 个视频", 100)
             
             return output_videos, formatted_time
             
@@ -1347,6 +1353,8 @@ class VideoProcessor:
         
         try:
             # 阶段1: 准备阶段 - 收集所有需要处理的场景
+            self.report_progress(f"准备场景素材", progress_start + 5)
+            
             scenes = []
             scene_concat_files = []
             
@@ -1368,6 +1376,8 @@ class VideoProcessor:
             
             if audio_missing:
                 logger.warning("所有场景都没有找到音频文件，尝试重新扫描配音文件夹")
+                self.report_progress(f"重新扫描配音文件夹", progress_start + 10)
+                
                 for folder_key, folder_data in material_data.items():
                     folder_path = folder_data.get("folder_path")
                     if folder_path and os.path.exists(folder_path):
@@ -1393,6 +1403,8 @@ class VideoProcessor:
                                 material_data[folder_key]["audios"] = audios
                                 logger.info(f"为场景{folder_key} 找到 {len(audios)} 个音频文件")
             
+            self.report_progress(f"整理场景素材", progress_start + 15)
+            
             for folder_key, folder_data in material_data.items():
                 if not folder_data.get("videos"):
                     logger.warning(f"跳过没有视频文件的场景: {folder_key}")
@@ -1413,6 +1425,7 @@ class VideoProcessor:
             # 没有有效场景，提前返回
             if not scenes:
                 logger.error("没有找到有效场景，处理结束")
+                self.report_progress(f"没有找到有效场景", 100)
                 return None
                 
             # 创建拼接文件目录
@@ -1427,6 +1440,9 @@ class VideoProcessor:
                 # 计算当前场景的进度范围
                 scene_progress_start = progress_start + (progress_range * i / len(scenes))
                 scene_progress_end = progress_start + (progress_range * (i + 1) / len(scenes))
+                
+                # 报告具体的场景处理
+                self.report_progress(f"处理场景 {i+1}/{len(scenes)}", scene_progress_start)
                 
                 # 创建场景临时输出文件
                 scene_output = os.path.join(temp_dir, f"scene_{i+1}.mp4")
@@ -1446,10 +1462,14 @@ class VideoProcessor:
                     scene_audio_duration = selected_audio.get("duration", 0)
                     scene_audio_file = selected_audio.get("path")
                     logger.info(f"场景 {i+1} 选择配音: {os.path.basename(scene_audio_file)}, 时长: {scene_audio_duration:.2f}秒")
+                    
+                    self.report_progress(f"选择配音 {os.path.basename(scene_audio_file)}", scene_progress_start + 5)
                 else:
                     # 使用默认的音频时长
                     scene_audio_duration = self.settings.get("default_audio_duration", 10.0)
                     logger.info(f"场景 {i+1} 使用默认配音时长: {scene_audio_duration:.2f}秒")
+                    
+                    self.report_progress(f"使用默认配音设置", scene_progress_start + 5)
                 
                 # 【工作原理实现】使用用户设置的抽取模式，而不是自动决定
                 use_multi_video = scene.get("extract_mode") == "multi_video"
@@ -1459,6 +1479,9 @@ class VideoProcessor:
                 if use_multi_video:
                     # 多视频模式 - 随机选择多个视频直到总时长超过配音时长
                     logger.info(f"场景 {i+1} 使用多视频混剪模式 配音时长 {scene_audio_duration:.2f}秒")
+                    
+                    self.report_progress(f"多视频混剪: 随机选择多个视频片段", scene_progress_start + 10)
+                    
                     if scene_videos_list:
                         # 随机打乱视频列表
                         import random
@@ -1478,9 +1501,12 @@ class VideoProcessor:
                         
                         if not selected_videos:
                             logger.warning(f"场景 {i+1} 没有找到足够的视频，跳过")
+                            self.report_progress(f"警告: 场景 {i+1} 没有找到足够的视频", scene_progress_start + 15)
                             continue
                         
                         logger.info(f"为场景{i+1} 选择{len(selected_videos)} 个视频，总时长{total_video_duration:.2f}秒")
+                        
+                        self.report_progress(f"准备合成: 处理 {len(selected_videos)} 个视频片段", scene_progress_start + 15)
                         
                         # 创建concat文件
                         concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
@@ -1649,6 +1675,7 @@ class VideoProcessor:
                             
                             if not selected_videos:
                                 logger.warning(f"场景 {i+1} 没有找到足够的视频，跳过")
+                                self.report_progress(f"警告: 场景 {i+1} 没有找到足够的视频", scene_progress_start + 15)
                                 continue
                             
                             logger.info(f"为场景{i+1} 选择{len(selected_videos)} 个视频，总时长{total_video_duration:.2f}秒")
