@@ -1,8 +1,37 @@
-# 忽略临时文件夹和其内容
+# 排除日志文件
+*.log
+logs/
+
+# 排除临时文件
 temp/
+test_temp/
+*/temp/
+*.tmp
+
+# 排除自动生成的备份文件，但保留配置模板
+# *.bak
+# *.bak.*
+
+# 排除输出和缓存目录
+output/
+test_output/
+test_out/
+build/
+dist/
+
+# 排除Python缓存文件
 __pycache__/
 *.py[cod]
 *$py.class
+
+# 排除测试数据目录
+test_data/
+test_material/
+test_materials/
+test_media/
+test_videos/
+test_videos_temp/
+test_*/
 
 # 忽略大型二进制文件
 *.exe
@@ -23,14 +52,10 @@ env/
 .env
 .venv
 
-# 忽略日志文件
-*.log
-
 # 忽略系统文件
 .DS_Store
 Thumbs.db
 
 # 忽略其他不需要版本控制的文件
 # 注意：不再忽略*.bak文件，因为我们需要跟踪配置备份
-*.swp
-*.tmp 
+*.swp 

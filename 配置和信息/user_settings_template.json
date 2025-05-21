@@ -2,6 +2,8 @@
     "import_folder": "",
     "last_material_folders": [],
     "folder_extract_modes": {},
+    "default_extract_mode": "single_video",
+    "extract_mode_options": ["single_video", "multi_video", "all_media"],
     "save_dir": "",
     "resolution": "竖屏 1080x1920",
     "bitrate": 5000,

@@ -2088,11 +2088,23 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             material_folders = []
             for row in range(self.video_table.rowCount()):
                 folder_path = self.video_table.item(row, 2).text()
+                
+                # 获取抽取模式，优先使用状态列中的值
+                extract_mode = "single_video"  # 默认值
+                status_item = self.video_table.item(row, 5)
+                if status_item and isinstance(status_item, ExtractModeItem):
+                    extract_mode = status_item.extract_mode
+                else:
+                    # 如果状态列中没有值，则使用存储在字典中的值
+                    extract_mode = self.folder_extract_modes.get(folder_path, "single_video")
+                    
+                # 确保更新字典，以便下次保存时能正确保存
+                self.folder_extract_modes[folder_path] = extract_mode
+                
                 folder_info = {
                     "name": self.video_table.item(row, 1).text(),
                     "path": folder_path,
-                    # 添加抽取模式设置，默认为单视频模式
-                    "extract_mode": self.folder_extract_modes.get(folder_path, "single_video")
+                    "extract_mode": extract_mode
                 }
                 material_folders.append(folder_info)
             
