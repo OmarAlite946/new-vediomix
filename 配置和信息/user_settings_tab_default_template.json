@@ -7,7 +7,9 @@
       "extract_mode": "single_video"
     }
   ],
-  "folder_extract_modes": {},
+  "folder_extract_modes": {
+    "E:/视频/素材/高手接话素材/测试配音\\1.1、a黄金故事（上）前5s": "single_video"
+  },
   "save_dir": "E:/视频/成品视频/新软件2",
   "resolution": "竖屏 1080x1920",
   "bitrate": 5000,
@@ -30,7 +32,7 @@
   "cache_dir": "D:\\新混剪工具\\temp",
   "last_active_tab": 0,
   "main_window_size": [
-    1495,
+    1539,
     632
   ],
   "main_window_pos": [

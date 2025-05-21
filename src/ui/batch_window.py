@@ -2,32 +2,37 @@
 # -*- coding: utf-8 -*-
 
 """
-多模板批量处理窗口
+批量处理窗口
 """
 
 import os
 import sys
 import time
 import json
+import traceback
+import gc
 import logging
 import threading
-import gc
-import traceback
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 
+# 添加项目根目录到 Python 路径
+project_root = Path(__file__).resolve().parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from PyQt5.QtCore import Qt, QTimer, QRect, QSize, pyqtSlot, QObject, QEvent, pyqtSignal, QMetaObject, QThread, Q_ARG
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap, QFont, QResizeEvent, QCursor, QPalette, QBrush, QRadialGradient
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QPushButton, QProgressBar, QApplication,
-    QTabWidget, QCheckBox, QMessageBox, QStatusBar,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QMenu, QAction, QToolButton, QFrame, QSplitter, QInputDialog
+    QMainWindow, QApplication, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, 
+    QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
+    QCheckBox, QProgressBar, QRadioButton, QComboBox, QLineEdit, 
+    QFileDialog, QMessageBox, QDialog, QSplitter, QStatusBar, QSpacerItem,
+    QSizePolicy, QFrame, QAbstractItemView, QStyle, QStyleOption, QMenu,
+    QButtonGroup, QScrollArea, QTextEdit, QLayout, QAction, QToolButton,
+    QDialogButtonBox, QInputDialog
 )
-from PyQt5.QtCore import (
-    Qt, pyqtSignal, pyqtSlot, QSize, QMetaObject, Q_ARG,
-    QTimer
-)
-from PyQt5.QtGui import QIcon, QFont, QColor
 
 from src.ui.main_window import MainWindow
 from src.utils.logger import get_logger
@@ -39,6 +44,7 @@ class BatchWindow(QMainWindow):
     """批量处理多个模板的主窗口"""
     
     def __init__(self, parent=None):
+        """初始化批量处理窗口"""
         super().__init__(parent)
         self.setWindowTitle("视频模板批量处理工具")
         self.resize(1200, 800)
@@ -73,6 +79,39 @@ class BatchWindow(QMainWindow):
         # 如果没有加载到已保存的模板，添加一个初始标签页
         if len(self.tabs) == 0:
             self._add_new_tab()
+        
+        # 创建定时器用于刷新UI
+        self.ui_refresh_timer = QTimer(self)
+        self.ui_refresh_timer.timeout.connect(self._periodic_ui_refresh)
+        self.ui_refresh_timer.start(5000)  # 每5秒刷新一次UI
+        
+        logger.info("批量处理窗口初始化完成")
+    
+    def _periodic_ui_refresh(self):
+        """定期刷新UI状态"""
+        try:
+            # 如果当前正在处理任务，则不刷新UI
+            if self.is_processing:
+                return
+                
+            # 检查是否有标签页需要刷新
+            for tab in self.tabs:
+                if "window" in tab and tab["window"] and tab["window"].isVisible():
+                    try:
+                        # 确保标签页内容可见
+                        tab["window"].update()
+                    except Exception as e:
+                        logger.debug(f"定期刷新标签页 '{tab['name']}' 时出错: {str(e)}")
+            
+            # 刷新整个窗口
+            self.update()
+            
+            # 更新任务表格
+            self._update_tasks_table()
+            
+            logger.debug("完成定期UI刷新")
+        except Exception as e:
+            logger.error(f"定期刷新UI时出错: {str(e)}")
     
     def _load_saved_templates(self):
         """加载保存的模板标签页状态"""
@@ -294,6 +333,24 @@ class BatchWindow(QMainWindow):
         self.btn_select_all = QPushButton("全选")
         self.btn_select_all.clicked.connect(self._on_select_all)
         
+        # 添加模板选择器按钮
+        self.btn_template_selector = QPushButton("模板选择器")
+        self.btn_template_selector.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.btn_template_selector.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
+        self.btn_template_selector.setToolTip("打开大型模板选择窗口，方便勾选多个模板")
+        self.btn_template_selector.clicked.connect(self._open_template_selector)
+        
         # 添加批量刷新素材数量按钮
         self.btn_refresh_counts = QPushButton("批量刷新素材数量")
         self.btn_refresh_counts.setStyleSheet("""
@@ -346,6 +403,7 @@ class BatchWindow(QMainWindow):
         self.btn_stop_batch.clicked.connect(self._on_stop_batch)
         
         batch_buttons.addWidget(self.btn_select_all)
+        batch_buttons.addWidget(self.btn_template_selector)
         batch_buttons.addWidget(self.btn_refresh_counts)
         batch_buttons.addStretch(1)
         batch_buttons.addWidget(self.btn_start_batch)
@@ -635,6 +693,9 @@ class BatchWindow(QMainWindow):
             # 保存tab_index到复选框的属性中，以便在选择时正确对应
             checkbox.setProperty("tab_index", row)
             
+            # 连接复选框状态变化信号
+            checkbox.stateChanged.connect(self._on_checkbox_state_changed)
+            
             self.tasks_table.setCellWidget(row, 0, checkbox_container)
             
             # 模板名称
@@ -681,6 +742,31 @@ class BatchWindow(QMainWindow):
         # 如果有统计信息，在状态栏显示
         if self.total_processed_count > 0:
             self.statusBar.showMessage(f"总计: 处理了 {self.total_processed_count} 个视频，总耗时 {self._format_time(self.total_process_time)}")
+            
+        # 更新队列信息：未开始批处理时，显示选中的模板数量
+        if not self.is_processing:
+            self._update_queue_display()
+    
+    def _update_queue_display(self):
+        """更新队列显示信息"""
+        if self.is_processing:
+            return
+        
+        selected_count = 0
+        for row in range(self.tasks_table.rowCount()):
+            checkbox_container = self.tasks_table.cellWidget(row, 0)
+            if checkbox_container:
+                checkbox = checkbox_container.findChild(QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    selected_count += 1
+        
+        self.label_queue.setText(f"队列: 0/{selected_count}")
+        logger.debug(f"更新队列显示信息: 0/{selected_count}")
+    
+    def _on_checkbox_state_changed(self, state):
+        """处理复选框状态变化"""
+        if not self.is_processing:
+            self._update_queue_display()
     
     def _format_time(self, seconds):
         """将秒数格式化为时分秒"""
@@ -703,18 +789,32 @@ class BatchWindow(QMainWindow):
             return
             
         # 检查第一个复选框的状态，并据此切换所有复选框
-        first_checkbox = self.tasks_table.cellWidget(0, 0)
-        if isinstance(first_checkbox, QCheckBox):
-            new_state = not first_checkbox.isChecked()
-            
-            # 更新所有复选框
-            for row in range(self.tasks_table.rowCount()):
-                checkbox = self.tasks_table.cellWidget(row, 0)
-                if isinstance(checkbox, QCheckBox):
-                    checkbox.setChecked(new_state)
-            
-            # 更新按钮文本
-            self.btn_select_all.setText("取消全选" if new_state else "全选")
+        first_checkbox_container = self.tasks_table.cellWidget(0, 0)
+        if first_checkbox_container:
+            first_checkbox = first_checkbox_container.findChild(QCheckBox)
+            if first_checkbox:
+                new_state = not first_checkbox.isChecked()
+                
+                # 更新所有复选框
+                for row in range(self.tasks_table.rowCount()):
+                    checkbox_container = self.tasks_table.cellWidget(row, 0)
+                    if checkbox_container:
+                        checkbox = checkbox_container.findChild(QCheckBox)
+                        if checkbox:
+                            checkbox.setChecked(new_state)
+                
+                # 更新按钮文本
+                self.btn_select_all.setText("取消全选" if new_state else "全选")
+                
+                # 更新队列显示
+                selected_count = self.tasks_table.rowCount() if new_state else 0
+                self.label_queue.setText(f"队列: 0/{selected_count}")
+                
+                # 更新状态栏显示
+                if new_state:
+                    self.statusBar.showMessage(f"已选择全部 {selected_count} 个模板", 3000)
+                else:
+                    self.statusBar.showMessage("已取消选择所有模板", 3000)
     
     def _on_refresh_all_counts(self):
         """批量刷新所有模板的素材数量"""
@@ -985,6 +1085,9 @@ class BatchWindow(QMainWindow):
         # 执行垃圾回收
         gc.collect()
         
+        # 刷新所有标签页显示
+        self._refresh_all_tabs_ui()
+        
         # 记录详细日志
         if current_tab is not None:
             logger.info(f"重置批处理模式，之前处理的标签页索引: {current_tab}")
@@ -992,6 +1095,46 @@ class BatchWindow(QMainWindow):
             logger.info(f"处理队列已清空，原队列包含: {original_queue}")
         
         logger.info("批处理模式已重置")
+    
+    def _refresh_all_tabs_ui(self):
+        """刷新所有标签页的UI显示"""
+        logger.info("开始刷新所有标签页UI显示")
+        try:
+            # 更新任务表格
+            self._update_tasks_table()
+            
+            # 刷新标签页控件
+            self.tab_widget.update()
+            
+            # 遍历所有标签页，刷新UI
+            for i in range(self.tab_widget.count()):
+                # 获取标签页窗口
+                tab_widget = self.tab_widget.widget(i)
+                if tab_widget:
+                    # 切换到该标签页以确保其可见
+                    self.tab_widget.setCurrentIndex(i)
+                    
+                    # 尝试刷新标签页的UI
+                    try:
+                        # 强制重绘
+                        tab_widget.update()
+                        
+                        # 如果有子窗口，也刷新它们
+                        for child in tab_widget.findChildren(QWidget):
+                            if child and not child.isHidden():
+                                child.update()
+                    except Exception as e:
+                        logger.error(f"刷新标签页 {i} UI时出错: {str(e)}")
+                
+                # 确保Qt事件循环处理绘制事件
+                QApplication.processEvents()
+            
+            # 最后再次更新整个窗口
+            self.update()
+            
+            logger.info("所有标签页UI刷新完成")
+        except Exception as e:
+            logger.error(f"刷新所有标签页UI时出错: {str(e)}")
     
     def _process_next_task(self):
         """处理队列中的下一个任务"""
@@ -1023,6 +1166,100 @@ class BatchWindow(QMainWindow):
             self._reset_batch_ui()
             # 发出提示音（如果启用）
             QApplication.beep()
+            
+            # 强制清理所有标签页的资源
+            try:
+                logger.info("批处理完成，清理所有标签页资源...")
+                # 清理每个标签页的处理器资源
+                for tab in self.tabs:
+                    if "window" in tab and tab["window"]:
+                        window = tab["window"]
+                        if hasattr(window, "processor") and window.processor:
+                            try:
+                                # 使用新添加的资源释放方法
+                                if hasattr(window.processor, "release_resources"):
+                                    logger.info(f"释放标签页 '{tab['name']}' 的处理器资源")
+                                    try:
+                                        # 安全地释放处理器资源，防止清理UI元素
+                                        window.processor.release_resources()
+                                    except Exception as e:
+                                        logger.error(f"使用release_resources方法释放资源时出错: {str(e)}")
+                                elif hasattr(window.processor, "clean_temp_files"):
+                                    # 退化方案：至少清理临时文件
+                                    logger.info(f"使用clean_temp_files备选方案清理标签页 '{tab['name']}' 的临时文件")
+                                    try:
+                                        window.processor.clean_temp_files()
+                                    except Exception as e:
+                                        logger.error(f"使用clean_temp_files方法清理临时文件时出错: {str(e)}")
+                                
+                                # 清空处理器引用
+                                window.processor = None
+                            except Exception as e:
+                                logger.error(f"释放标签页 '{tab['name']}' 资源时出错: {str(e)}")
+                        
+                        # 确保窗口UI元素完好
+                        try:
+                            # 刷新窗口
+                            if hasattr(window, "update"):
+                                window.update()
+                                
+                            # 确保窗口组件可见
+                            for widget_name in ["stackedWidget", "panel_material", "panel_setting", "save_dir_display"]:
+                                if hasattr(window, widget_name):
+                                    widget = getattr(window, widget_name)
+                                    if widget and hasattr(widget, "show"):
+                                        widget.show()
+                                        if hasattr(widget, "update"):
+                                            widget.update()
+                        except Exception as e:
+                            logger.error(f"刷新窗口UI元素时出错: {str(e)}")
+                
+                # 执行一次完整的垃圾回收
+                import gc
+                gc.collect(0)
+                gc.collect(1)
+                gc.collect(2)
+                
+                # 强制执行一次Qt事件处理
+                QApplication.processEvents()
+                
+                # 刷新界面显示
+                self._refresh_all_tabs_ui()
+                
+                logger.info("所有标签页资源清理完成")
+                
+                # 确保所有标签页仍然可见
+                for i, tab in enumerate(self.tabs):
+                    if "window" in tab and tab["window"]:
+                        try:
+                            # 刷新标签页显示
+                            self.tab_widget.setCurrentIndex(i)
+                            QApplication.processEvents()
+                            self.tab_widget.update()
+                            
+                            # 额外确保标签页内容显示正确
+                            tab_widget = self.tab_widget.widget(i)
+                            if tab_widget:
+                                tab_widget.show()
+                                tab_widget.update()
+                        except Exception as e:
+                            logger.error(f"刷新标签页 {tab['name']} 显示时出错: {str(e)}")
+                
+                # 最后再刷新一次整个批处理窗口
+                self.update()
+                QApplication.processEvents()
+                
+                # 使用专门的函数全面刷新所有标签页UI
+                self._refresh_tabs_after_resource_release()
+                
+                # 确保主界面显示正常
+                self.show()
+                self.activateWindow()
+                self.raise_()
+                QApplication.processEvents()
+            except Exception as e:
+                logger.error(f"批处理结束清理资源时出错: {str(e)}")
+                
             return
         
         logger.info(f"处理队列中的下一个任务，当前队列长度: {len(self.processing_queue)}")
@@ -1068,6 +1305,25 @@ class BatchWindow(QMainWindow):
             self._update_tasks_table()
             QTimer.singleShot(100, self._process_next_task)
             return
+        
+        # 在开始新模板前执行一次内存清理，确保系统内存充足
+        try:
+            # 执行内存清理
+            import gc
+            logger.info("在开始新模板前执行内存清理...")
+            before_count = gc.get_count()
+            # 执行完整的垃圾回收
+            gc.collect(0)  # 收集第0代对象
+            gc.collect(1)  # 收集第1代对象
+            gc.collect(2)  # 收集第2代对象
+            after_count = gc.get_count()
+            logger.info(f"内存清理完成: {before_count} -> {after_count}")
+            
+            # 强制执行一次Qt事件处理
+            QApplication.processEvents()
+        except Exception as e:
+            logger.error(f"内存清理过程中出错: {str(e)}")
+            # 错误不应阻止继续进行
         
         # 更新进度条 - 使用实际完成比例
         if total_selected_tasks > 0:
@@ -1172,8 +1428,75 @@ class BatchWindow(QMainWindow):
                         # 处理完成后，立即启动下一个任务
                         logger.info(f"标签页 {next_idx} 处理完成，准备处理下一个任务")
                         
+                        # 确保彻底清理资源，避免内存泄漏
+                        try:
+                            # 1. 关闭视频处理器的所有资源
+                            if hasattr(window, "processor") and window.processor:
+                                # 使用新添加的资源释放方法
+                                if hasattr(window.processor, "release_resources"):
+                                    logger.info("使用release_resources方法释放处理器资源...")
+                                    window.processor.release_resources()
+                                elif hasattr(window.processor, "clean_temp_files"):
+                                    logger.info("开始清理临时文件...")
+                                    window.processor.clean_temp_files()
+                                    if hasattr(window.processor, "stop_processing"):
+                                        window.processor.stop_processing()
+                                # 清空处理器引用
+                                window.processor = None
+                                logger.info("视频处理器已清空")
+                            
+                            # 2. 清空处理线程
+                            if hasattr(window, "processing_thread") and window.processing_thread:
+                                window.processing_thread = None
+                                logger.info("处理线程已清空")
+                            
+                            # 3. 强制执行一次Python垃圾回收
+                            import gc
+                            # 获取当前未回收对象数量
+                            before_count = gc.get_count()
+                            logger.info(f"执行垃圾回收前未回收对象计数: {before_count}")
+                            
+                            # 执行完整的垃圾回收
+                            gc.collect(0)  # 收集第0代对象
+                            gc.collect(1)  # 收集第1代对象
+                            gc.collect(2)  # 收集第2代对象
+                            
+                            # 获取回收后对象数量
+                            after_count = gc.get_count()
+                            logger.info(f"执行垃圾回收后未回收对象计数: {after_count}")
+                            
+                            # 4. 尝试释放其他可能的资源 - 但保留UI界面元素
+                            for attr_name in dir(window):
+                                if attr_name.startswith("__") or attr_name.startswith("ui_"):
+                                    continue  # 跳过UI相关元素
+                                
+                                # 跳过所有QWidget类型的对象，以保留界面元素
+                                attr = getattr(window, attr_name, None)
+                                # 跳过界面相关元素和基本属性
+                                if (attr is None or 
+                                    isinstance(attr, (QWidget, QLayout, QAction, QObject)) or
+                                    attr_name in ['tab_widget', 'menuBar', 'statusBar', 'centralWidget']):
+                                    continue
+                                
+                                # 只关闭明确知道可以关闭的资源类型
+                                if hasattr(attr, "close") and callable(getattr(attr, "close")):
+                                    try:
+                                        getattr(attr, "close")()
+                                        logger.debug(f"已关闭资源: {attr_name}")
+                                    except Exception as e:
+                                        logger.debug(f"关闭资源 {attr_name} 时出错: {str(e)}")
+                            
+                            # 5. 强制执行一次Qt事件处理
+                            QApplication.processEvents()
+                            
+                            logger.info("资源清理完成，系统内存已释放")
+                        except Exception as e:
+                            logger.error(f"清理资源时出错: {str(e)}")
+                            error_detail = traceback.format_exc()
+                            logger.error(f"详细错误信息: {error_detail}")
+                        
                         # 使用短时间延迟调用下一个任务，确保UI有时间更新
-                        QTimer.singleShot(500, self._process_next_task)
+                        QTimer.singleShot(1000, self._process_next_task)  # 延长等待时间到1秒，给系统更多时间释放资源
                     else:
                         # 如果线程仍在运行，再次检查
                         # 为了避免卡住，我们也检查一下是否线程确实在工作
@@ -1184,7 +1507,31 @@ class BatchWindow(QMainWindow):
                             
                             # 增加超时时间到30秒，视频处理可能需要更长时间
                             if time_since_update > 30:  # 如果30秒没有进度更新
-                                logger.warning(f"任务 {tab['name']} 似乎已卡住 (>30秒无进度更新)，尝试重启处理流程")
+                                logger.warning(f"任务 {tab['name']} 似乎已卡住 (>30秒无进度更新)，尝试强制更新进度")
+                                
+                                # 获取此标签页的强制更新尝试次数
+                                force_update_retries = tab.get("force_update_retries", 0)
+                                
+                                # 尝试使用强制更新方法
+                                if force_update_retries < 3 and hasattr(window, "force_progress_update"):
+                                    logger.info(f"尝试强制更新进度状态，第{force_update_retries + 1}次尝试")
+                                    force_update_success = window.force_progress_update()
+                                    
+                                    # 不管结果如何，都增加尝试次数
+                                    tab["force_update_retries"] = force_update_retries + 1
+                                    
+                                    if force_update_success:
+                                        logger.info(f"强制更新进度成功，继续等待处理")
+                                        # 更新上次进度时间以避免立即再次触发
+                                        window.last_progress_update = time.time()
+                                        QTimer.singleShot(5000, check_completion)  # 5秒后再次检查
+                                        return
+                                    else:
+                                        logger.warning(f"强制更新进度失败，尝试启用传统恢复方式")
+                                
+                                # 如果强制更新失败或尝试次数已用完，尝试传统恢复方法
+                                if force_update_retries >= 3:
+                                    logger.warning(f"任务 {tab['name']} 已尝试强制更新 {force_update_retries} 次，仍无响应，判定为超时")
                                 
                                 # 尝试直接调用处理过程来恢复
                                 try:
@@ -1255,6 +1602,9 @@ class BatchWindow(QMainWindow):
             # 确保标签页处于可见状态，切换到相应标签
             self.tab_widget.setCurrentIndex(next_idx)
             QApplication.processEvents()  # 确保UI更新
+            
+            # 重置强制更新重试计数
+            tab["force_update_retries"] = 0
             
             # 启动合成
             try:
@@ -1480,4 +1830,276 @@ class BatchWindow(QMainWindow):
             self.template_state.save_template_tabs(self.tabs)
             logger.info(f"已保存 {len(self.tabs)} 个模板状态")
         except Exception as e:
-            logger.error(f"保存模板状态时出错: {str(e)}") 
+            logger.error(f"保存模板状态时出错: {str(e)}")
+    
+    def _open_template_selector(self):
+        """打开模板选择器大窗口"""
+        try:
+            # 创建模板选择器对话框
+            selector = TemplateSelector(self.tabs, parent=self)
+            
+            # 显示对话框
+            if selector.exec_() == QDialog.Accepted:
+                # 获取用户选择的模板
+                selected_templates = selector.get_selected_templates()
+                
+                # 显示选择结果
+                if selected_templates:
+                    self.statusBar.showMessage(f"已选择 {len(selected_templates)} 个模板进行批处理", 3000)
+                else:
+                    self.statusBar.showMessage("未选择任何模板", 3000)
+        except Exception as e:
+            logger.error(f"打开模板选择器时出错: {str(e)}")
+            QMessageBox.warning(self, "错误", f"打开模板选择器时出错: {str(e)}")
+
+    def _refresh_tabs_after_resource_release(self):
+        """在资源释放后刷新所有标签页的UI显示，确保UI保持可见"""
+        try:
+            logger.info("在资源释放后刷新所有标签页UI...")
+            
+            # 首先确保批处理窗口自身显示正常
+            self.update()
+            QApplication.processEvents()
+            
+            # 更新任务表格
+            self._update_tasks_table()
+            
+            # 刷新标签控件
+            self.tab_widget.update()
+            
+            # 遍历所有标签页
+            for i in range(self.tab_widget.count()):
+                try:
+                    # 获取标签页和对应的窗口
+                    tab_widget = self.tab_widget.widget(i)
+                    if not tab_widget:
+                        continue
+                    
+                    # 切换到该标签页
+                    self.tab_widget.setCurrentIndex(i)
+                    QApplication.processEvents()
+                    
+                    # 确保标签页可见
+                    tab_widget.show()
+                    tab_widget.update()
+                    
+                    # 刷新标签页中的窗口
+                    if i < len(self.tabs):
+                        tab = self.tabs[i]
+                        if "window" in tab and tab["window"]:
+                            window = tab["window"]
+                            
+                            # 刷新主窗口
+                            if hasattr(window, "update"):
+                                window.update()
+                                
+                            # 刷新关键UI组件
+                            for widget_name in ["stackedWidget", "panel_material", "panel_setting", 
+                                               "save_dir_display", "material_table", "btn_start"]:
+                                if hasattr(window, widget_name):
+                                    widget = getattr(window, widget_name)
+                                    if widget and hasattr(widget, "show"):
+                                        widget.show()
+                                        if hasattr(widget, "update"):
+                                            widget.update()
+                
+                    # 刷新所有子组件
+                    for child in tab_widget.findChildren(QWidget):
+                        if child and not child.isHidden():
+                            try:
+                                child.show()
+                                child.update()
+                            except Exception as e:
+                                logger.debug(f"刷新子组件时出错: {str(e)}")
+                    
+                    # 处理事件循环
+                    QApplication.processEvents()
+                except Exception as e:
+                    logger.error(f"刷新标签页 {i} 时出错: {str(e)}")
+                
+            # 最后确保整体UI刷新
+            self.update()
+            QApplication.processEvents()
+            
+            logger.info("标签页UI刷新完成")
+        except Exception as e:
+            logger.error(f"刷新标签页UI时出错: {str(e)}")
+
+# 新增模板选择器对话框类
+class TemplateSelector(QDialog):
+    """模板选择器对话框，提供一个更大的窗口来选择要批处理的模板"""
+    
+    def __init__(self, templates, parent=None):
+        super().__init__(parent)
+        self.templates = templates
+        # 获取已经在表格中选中的模板名称
+        self.batch_window = parent
+        self.selected_templates = []
+        # 从表格中获取当前选中的模板
+        if hasattr(self.batch_window, 'tasks_table'):
+            for row in range(self.batch_window.tasks_table.rowCount()):
+                checkbox_container = self.batch_window.tasks_table.cellWidget(row, 0)
+                if checkbox_container:
+                    checkbox = checkbox_container.findChild(QCheckBox)
+                    if checkbox and checkbox.isChecked() and row < len(templates):
+                        self.selected_templates.append(templates[row].get("name", f"模板{row+1}"))
+        self._init_ui()
+    
+    def _init_ui(self):
+        """初始化UI"""
+        # 设置窗口属性
+        self.setWindowTitle("模板选择器")
+        self.resize(900, 700)
+        
+        # 主布局
+        layout = QVBoxLayout(self)
+        
+        # 说明标签
+        label = QLabel("请选择要批量处理的模板:")
+        layout.addWidget(label)
+        
+        # 创建表格
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["选择", "模板名称", "保存目录", "状态", "最后处理时间"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
+        # 填充表格
+        self._fill_table()
+        
+        layout.addWidget(self.table)
+        
+        # 快捷操作按钮
+        button_layout = QHBoxLayout()
+        
+        select_all_btn = QPushButton("全选")
+        select_all_btn.clicked.connect(self._select_all)
+        button_layout.addWidget(select_all_btn)
+        
+        deselect_all_btn = QPushButton("取消全选")
+        deselect_all_btn.clicked.connect(self._deselect_all)
+        button_layout.addWidget(deselect_all_btn)
+        
+        invert_selection_btn = QPushButton("反选")
+        invert_selection_btn.clicked.connect(self._invert_selection)
+        button_layout.addWidget(invert_selection_btn)
+        
+        layout.addLayout(button_layout)
+        
+        # 确定和取消按钮
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def _fill_table(self):
+        """填充表格数据"""
+        self.table.setRowCount(len(self.templates))
+        
+        for row, tab in enumerate(self.templates):
+            # 创建复选框
+            checkbox = QCheckBox()
+            # 检查模板名称是否在已选列表中
+            template_name = tab.get("name", f"模板{row+1}")
+            checkbox.setChecked(template_name in self.selected_templates)
+            
+            # 创建复选框单元格居中的容器
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # 设置第一列为复选框
+            self.table.setCellWidget(row, 0, checkbox_widget)
+            
+            # 设置其他列
+            self.table.setItem(row, 1, QTableWidgetItem(template_name))
+            self.table.setItem(row, 2, QTableWidgetItem(tab.get("output_dir", "-")))
+            
+            # 状态列
+            status_item = QTableWidgetItem(tab.get("status", "待处理"))
+            
+            # 根据状态设置颜色
+            if tab.get("status") == "完成":
+                status_item.setBackground(QColor("#C8E6C9"))  # 淡绿色
+            elif tab.get("status") == "失败":
+                status_item.setBackground(QColor("#FFCDD2"))  # 淡红色
+            elif tab.get("status") == "处理中":
+                status_item.setBackground(QColor("#FFF9C4"))  # 淡黄色
+            
+            self.table.setItem(row, 3, status_item)
+            
+            # 最后处理时间
+            self.table.setItem(row, 4, QTableWidgetItem(tab.get("last_process_time", "-")))
+        
+        # 自动调整行高
+        self.table.resizeRowsToContents()
+        logger.debug(f"模板选择器初始选中的模板: {self.selected_templates}")
+    
+    def _select_all(self):
+        """全选所有模板"""
+        for row in range(self.table.rowCount()):
+            self._set_checkbox(row, True)
+    
+    def _deselect_all(self):
+        """取消全选"""
+        for row in range(self.table.rowCount()):
+            self._set_checkbox(row, False)
+    
+    def _invert_selection(self):
+        """反向选择"""
+        for row in range(self.table.rowCount()):
+            current_state = self._get_checkbox(row).isChecked()
+            self._set_checkbox(row, not current_state)
+    
+    def _get_checkbox(self, row):
+        """获取指定行的复选框"""
+        checkbox_widget = self.table.cellWidget(row, 0)
+        if checkbox_widget:
+            # 找到QCheckBox子部件
+            return checkbox_widget.findChild(QCheckBox)
+        return None
+    
+    def _set_checkbox(self, row, checked):
+        """设置指定行的复选框状态"""
+        checkbox = self._get_checkbox(row)
+        if checkbox:
+            checkbox.setChecked(checked)
+    
+    def get_selected_templates(self):
+        """获取已选择的模板名称列表"""
+        selected_templates = []
+        for row in range(self.table.rowCount()):
+            checkbox = self._get_checkbox(row)
+            if checkbox and checkbox.isChecked():
+                template_name = self.table.item(row, 1).text()
+                selected_templates.append(template_name)
+        return selected_templates
+    
+    def accept(self):
+        """确定按钮被点击"""
+        # 更新选中的模板
+        self.selected_templates = self.get_selected_templates()
+        logger.info(f"模板选择器确认选择了 {len(self.selected_templates)} 个模板")
+        
+        # 更新批处理窗口中的复选框状态与模板选择器保持一致
+        if hasattr(self.batch_window, 'tasks_table') and self.batch_window.tasks_table:
+            for row in range(self.batch_window.tasks_table.rowCount()):
+                if row < len(self.templates):
+                    checkbox_container = self.batch_window.tasks_table.cellWidget(row, 0)
+                    if checkbox_container:
+                        checkbox = checkbox_container.findChild(QCheckBox)
+                        if checkbox:
+                            template_name = self.templates[row].get("name", f"模板{row+1}")
+                            checkbox.setChecked(template_name in self.selected_templates)
+                            logger.debug(f"更新批处理窗口复选框状态: 模板 {template_name} - {'选中' if template_name in self.selected_templates else '未选中'}")
+            
+            # 更新队列显示信息
+            self.batch_window._update_queue_display()
+        
+        super().accept()

@@ -1,0 +1,6 @@
+@echo off
+echo 正在启动项目清理工具...
+python cleanup_project.py
+echo.
+echo 按任意键退出...
+pause > nul 
