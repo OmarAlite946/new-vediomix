@@ -4055,7 +4055,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
     # 修改 _update_media_counts 方法
     def _update_media_counts(self):
         """更新素材表格中每一行的视频和配音数量"""
-        from src.utils.file_utils import list_media_files
+        from src.utils.file_utils import list_media_files, resolve_shortcut
         logger.info("正在更新素材数量...")
         
         # 设置鼠标等待状态
@@ -4071,7 +4071,58 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 video_path = os.path.join(folder_path, "视频")
                 video_count = 0
                 
-                if os.path.exists(video_path) and os.path.isdir(video_path):
+                # 处理视频文件夹或快捷方式
+                has_video_folder = os.path.exists(video_path) and os.path.isdir(video_path)
+                
+                # 如果视频文件夹不存在，检查可能的快捷方式
+                if not has_video_folder:
+                    # 检查特定命名格式的快捷方式
+                    video_shortcut_paths = [
+                        os.path.join(folder_path, "视频 - 快捷方式.lnk"),
+                        os.path.join(folder_path, "视频.lnk"),
+                        os.path.join(folder_path, "视频快捷方式.lnk")
+                    ]
+                    
+                    # 检查所有可能的命名格式
+                    for shortcut_path in video_shortcut_paths:
+                        if os.path.exists(shortcut_path):
+                            logger.info(f"发现视频快捷方式: {shortcut_path}")
+                            video_target = resolve_shortcut(shortcut_path)
+                            if video_target:
+                                video_path = video_target
+                                has_video_folder = True
+                                logger.info(f"检测到视频快捷方式: {shortcut_path} -> {video_path}")
+                                break
+                    
+                    # 如果仍未找到，则尝试搜索包含"视频"的所有.lnk文件
+                    if not has_video_folder:
+                        try:
+                            for item in os.listdir(folder_path):
+                                # 确保文件名是正确的字符串格式
+                                if isinstance(item, bytes):
+                                    try:
+                                        item = item.decode('utf-8')
+                                    except UnicodeDecodeError:
+                                        try:
+                                            item = item.decode('gbk')
+                                        except UnicodeDecodeError:
+                                            logger.error(f"无法解码文件名: {item}")
+                                            continue
+                                
+                                if item.lower().endswith('.lnk') and "视频" in item:
+                                    shortcut_path = os.path.join(folder_path, item)
+                                    logger.info(f"发现可能的视频快捷方式: {shortcut_path}")
+                                    video_target = resolve_shortcut(shortcut_path)
+                                    if video_target and os.path.isdir(video_target):
+                                        video_path = video_target
+                                        has_video_folder = True
+                                        logger.info(f"检测到视频快捷方式: {shortcut_path} -> {video_path}")
+                                        break
+                        except Exception as e:
+                            logger.error(f"搜索视频快捷方式时出错: {str(e)}")
+                
+                # 如果找到了视频文件夹，计算视频数量
+                if has_video_folder:
                     try:
                         media = list_media_files(video_path, recursive=True)
                         video_count = len(media['videos'])
@@ -4083,7 +4134,58 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 audio_path = os.path.join(folder_path, "配音")
                 audio_count = 0
                 
-                if os.path.exists(audio_path) and os.path.isdir(audio_path):
+                # 处理配音文件夹或快捷方式
+                has_audio_folder = os.path.exists(audio_path) and os.path.isdir(audio_path)
+                
+                # 如果配音文件夹不存在，检查可能的快捷方式
+                if not has_audio_folder:
+                    # 检查特定命名格式的快捷方式
+                    audio_shortcut_paths = [
+                        os.path.join(folder_path, "配音 - 快捷方式.lnk"),
+                        os.path.join(folder_path, "配音.lnk"),
+                        os.path.join(folder_path, "配音快捷方式.lnk")
+                    ]
+                    
+                    # 检查所有可能的命名格式
+                    for shortcut_path in audio_shortcut_paths:
+                        if os.path.exists(shortcut_path):
+                            logger.info(f"发现配音快捷方式: {shortcut_path}")
+                            audio_target = resolve_shortcut(shortcut_path)
+                            if audio_target:
+                                audio_path = audio_target
+                                has_audio_folder = True
+                                logger.info(f"检测到配音快捷方式: {shortcut_path} -> {audio_path}")
+                                break
+                    
+                    # 如果仍未找到，则尝试搜索包含"配音"的所有.lnk文件
+                    if not has_audio_folder:
+                        try:
+                            for item in os.listdir(folder_path):
+                                # 确保文件名是正确的字符串格式
+                                if isinstance(item, bytes):
+                                    try:
+                                        item = item.decode('utf-8')
+                                    except UnicodeDecodeError:
+                                        try:
+                                            item = item.decode('gbk')
+                                        except UnicodeDecodeError:
+                                            logger.error(f"无法解码文件名: {item}")
+                                            continue
+                                
+                                if item.lower().endswith('.lnk') and "配音" in item:
+                                    shortcut_path = os.path.join(folder_path, item)
+                                    logger.info(f"发现可能的配音快捷方式: {shortcut_path}")
+                                    audio_target = resolve_shortcut(shortcut_path)
+                                    if audio_target and os.path.isdir(audio_target):
+                                        audio_path = audio_target
+                                        has_audio_folder = True
+                                        logger.info(f"检测到配音快捷方式: {shortcut_path} -> {audio_path}")
+                                        break
+                        except Exception as e:
+                            logger.error(f"搜索配音快捷方式时出错: {str(e)}")
+                
+                # 如果找到了配音文件夹，计算音频数量
+                if has_audio_folder:
                     try:
                         media = list_media_files(audio_path, recursive=True)
                         audio_count = len(media['audios'])

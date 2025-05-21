@@ -106,7 +106,7 @@
     "E:\\视频\\素材\\高手接话素材\\高手接话故事001\\硬广b7、翻书长视频混剪": "single_video",
     "E:\\视频\\素材\\高手接话素材\\高手接话故事001\\硬广b8、别等孩子摔了跟斗": "single_video"
   },
-  "save_dir": "",
+  "save_dir": "E:/视频/成品视频/新软件2",
   "resolution": "竖屏 1080x1920",
   "bitrate": 5000,
   "original_bitrate": true,
@@ -120,11 +120,11 @@
   "watermark_position": "右下角",
   "watermark_pos_x": 10,
   "watermark_pos_y": 10,
-  "voice_volume": 5.0,
-  "bgm_volume": 5.0,
+  "voice_volume": 2.0,
+  "bgm_volume": 0.0,
   "bgm_path": "",
   "audio_mode": "配音模式",
-  "generate_count": 1,
+  "generate_count": 10,
   "cache_dir": "D:\\新混剪工具\\temp",
   "last_active_tab": 0,
   "main_window_size": [
