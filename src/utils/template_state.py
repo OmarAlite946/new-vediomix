@@ -14,12 +14,15 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any
 
+# 导入路径工具
+from .path_utils import get_config_dir
+
 # 获取日志
 logger = logging.getLogger(__name__)
 
 # 配置文件路径
-CONFIG_DIR = Path.home() / "VideoMixTool"
-TEMPLATE_STATE_FILE = CONFIG_DIR / "template_state.json"
+CONFIG_DIR = get_config_dir()
+TEMPLATE_STATE_FILE = CONFIG_DIR / "template_state_global.json"
 
 class TemplateState:
     """模板状态管理类"""

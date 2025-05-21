@@ -11,13 +11,24 @@ import json
 import logging
 from pathlib import Path
 
+# 导入路径工具
+from .path_utils import get_config_dir, get_project_root
+
 # 日志设置
 logger = logging.getLogger(__name__)
 
 # 获取系统临时目录
 def get_system_temp_dir():
-    """获取系统临时目录，优先使用非C盘路径"""
-    # 优先尝试使用D盘
+    """获取系统临时目录，优先使用项目内的temp目录"""
+    # 优先使用项目内的temp目录
+    project_temp = str(get_project_root() / "temp")
+    try:
+        os.makedirs(project_temp, exist_ok=True)
+        return project_temp
+    except Exception as e:
+        logger.warning(f"无法创建项目内临时目录: {e}")
+    
+    # 其次尝试使用D盘
     d_drive_path = "D:\\VideoMixTool_Temp"
     if os.path.exists("D:\\") or os.access("D:\\", os.W_OK):
         try:
@@ -26,7 +37,7 @@ def get_system_temp_dir():
         except Exception as e:
             logger.warning(f"无法创建D盘临时目录: {e}")
     
-    # 其次尝试使用环境变量中的临时目录
+    # 再次尝试使用环境变量中的临时目录
     temp_dir = os.environ.get("TEMP") or os.environ.get("TMP")
     if temp_dir and os.path.exists(temp_dir):
         # 检查是否在C盘
@@ -55,12 +66,12 @@ def get_system_temp_dir():
 
 # 默认配置
 DEFAULT_CONFIG = {
-    "cache_dir": get_system_temp_dir(),  # 优先使用系统环境变量设置的临时目录
+    "cache_dir": get_system_temp_dir(),  # 优先使用项目内的temp目录
 }
 
 # 配置文件路径
-CONFIG_DIR = Path.home() / "VideoMixTool"
-CONFIG_FILE = CONFIG_DIR / "cache_config.json"
+CONFIG_DIR = get_config_dir()
+CONFIG_FILE = CONFIG_DIR / "cache_config_global.json"
 
 
 class CacheConfig:

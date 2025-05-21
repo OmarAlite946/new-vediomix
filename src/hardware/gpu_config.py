@@ -12,6 +12,11 @@ import logging
 from pathlib import Path
 import re
 
+# 导入路径工具
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from utils.path_utils import get_config_dir
+
 from .system_analyzer import SystemAnalyzer
 
 # 日志设置
@@ -31,8 +36,8 @@ DEFAULT_CONFIG = {
 }
 
 # 配置文件路径
-CONFIG_DIR = Path.home() / "VideoMixTool"
-CONFIG_FILE = CONFIG_DIR / "gpu_config.json"
+CONFIG_DIR = get_config_dir()
+CONFIG_FILE = CONFIG_DIR / "gpu_config_global.json"
 
 
 class GPUConfig:
