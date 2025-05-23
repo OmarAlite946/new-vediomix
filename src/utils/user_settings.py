@@ -394,6 +394,30 @@ class UserSettings:
             logger.error(f"设置配置值失败: {key}={value}, {e}")
             return False
     
+    def update_setting_in_memory(self, key: str, value: Any) -> bool:
+        """
+        只更新内存中的设置值，不保存到文件
+        
+        Args:
+            key: 设置键名
+            value: 设置值
+            
+        Returns:
+            bool: 是否设置成功
+        """
+        try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                logger.warning("更新内存设置时发现_settings不存在，创建默认设置")
+                self._settings = DEFAULT_SETTINGS.copy()
+                
+            # 设置值
+            self._settings[key] = value
+            return True
+        except Exception as e:
+            logger.error(f"更新内存配置值失败: {key}={value}, {e}")
+            return False
+    
     def set_multiple_settings(self, settings_dict: Dict[str, Any]) -> bool:
         """
         设置多个配置项
@@ -418,6 +442,31 @@ class UserSettings:
             return self._save_settings()
         except Exception as e:
             logger.error(f"批量设置配置失败: {e}")
+            return False
+    
+    def update_multiple_settings_in_memory(self, settings_dict: Dict[str, Any]) -> bool:
+        """
+        批量更新内存中的设置值，不保存到文件
+        
+        Args:
+            settings_dict: 包含多个设置的字典
+            
+        Returns:
+            bool: 是否全部更新成功
+        """
+        try:
+            # 确保_settings属性存在
+            if not hasattr(self, '_settings') or self._settings is None:
+                logger.warning("批量更新内存设置时发现_settings不存在，创建默认设置")
+                self._settings = DEFAULT_SETTINGS.copy()
+                
+            # 更新设置
+            for key, value in settings_dict.items():
+                self._settings[key] = value
+            
+            return True
+        except Exception as e:
+            logger.error(f"批量更新内存配置失败: {e}")
             return False
     
     def get_all_settings(self) -> Dict[str, Any]:

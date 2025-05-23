@@ -144,8 +144,9 @@ class MainWindow(QMainWindow):
         
         # 主布局
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(10)
         
-        # 创建选项卡部件
+        # 创建标签页
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
         
@@ -702,6 +703,18 @@ class MainWindow(QMainWindow):
         # 添加音频设置到主设置布局
         settings_layout.addRow(audio_group)
     
+        # 添加保存设置按钮
+        save_settings_layout = QHBoxLayout()
+        self.btn_save_settings = QPushButton("保存当前所有设置")
+        self.btn_save_settings.setIcon(QIcon.fromTheme("document-save", QIcon(":/icons/save.png")))
+        self.btn_save_settings.setToolTip("手动保存当前所有设置，避免自动保存导致的问题")
+        save_settings_layout.addStretch()
+        save_settings_layout.addWidget(self.btn_save_settings)
+        main_layout.addLayout(save_settings_layout)
+    
+        # 设置窗口标题
+        self.setWindowTitle("视频混剪批处理工具")
+    
     def _init_menubar(self):
         """初始化菜单栏"""
         menubar = self.menuBar()
@@ -818,11 +831,14 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
     
     def _connect_signals(self):
         """连接信号和槽"""
-        # 素材操作
+        # 按钮事件
         self.btn_add_material.clicked.connect(self.on_add_material)
         self.btn_batch_import.clicked.connect(self.on_batch_import)
         self.btn_refresh_material.clicked.connect(self.on_refresh_material)
         self.btn_clear_material.clicked.connect(self.on_clear_material)
+        
+        # 保存设置按钮
+        self.btn_save_settings.clicked.connect(self.on_save_settings)
         
         # 目录浏览
         self.btn_browse_save_dir.clicked.connect(self.on_browse_save_dir)
@@ -864,85 +880,92 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 连接设置值变化的信号到设置保存方法
         # 分辨率
         self.combo_resolution.currentTextChanged.connect(
-            lambda text: self.user_settings.set_setting("resolution", text)
+            lambda text: self.user_settings.update_setting_in_memory("resolution", text)
         )
         
         # 比特率
         self.spin_bitrate.valueChanged.connect(
-            lambda value: self.user_settings.set_setting("bitrate", value)
+            lambda value: self.user_settings.update_setting_in_memory("bitrate", value)
         )
         
         # 原始比特率
         self.chk_original_bitrate.toggled.connect(
-            lambda checked: self.user_settings.set_setting("original_bitrate", checked)
+            lambda checked: self.user_settings.update_setting_in_memory("original_bitrate", checked)
         )
         
         # 转场效果
         self.combo_transition.currentTextChanged.connect(
-            lambda text: self.user_settings.set_setting("transition", text)
+            lambda text: self.user_settings.update_setting_in_memory("transition", text)
         )
         
         # GPU选择
         self.combo_gpu.currentTextChanged.connect(
-            lambda text: self.user_settings.set_setting("gpu", text)
+            lambda text: self.user_settings.update_setting_in_memory("gpu", text)
         )
         
         # 水印启用状态
         self.chk_enable_watermark.toggled.connect(
-            lambda checked: self.user_settings.set_setting("watermark_enabled", checked)
+            lambda checked: self.user_settings.update_setting_in_memory("watermark_enabled", checked)
         )
         
         # 水印前缀
         self.edit_watermark_prefix.textChanged.connect(
-            lambda text: self.user_settings.set_setting("watermark_prefix", text)
+            lambda text: self.user_settings.update_setting_in_memory("watermark_prefix", text)
         )
         
         # 水印大小
         self.spin_watermark_size.valueChanged.connect(
-            lambda value: self.user_settings.set_setting("watermark_size", value)
+            lambda value: self.user_settings.update_setting_in_memory("watermark_size", value)
         )
         
         # 水印位置
         self.combo_watermark_position.currentTextChanged.connect(
-            lambda text: self.user_settings.set_setting("watermark_position", text)
+            lambda text: self.user_settings.update_setting_in_memory("watermark_position", text)
         )
         
         # 水印坐标
         self.spin_pos_x.valueChanged.connect(
-            lambda value: self.user_settings.set_setting("watermark_pos_x", value)
+            lambda value: self.user_settings.update_setting_in_memory("watermark_pos_x", value)
         )
         
         self.spin_pos_y.valueChanged.connect(
-            lambda value: self.user_settings.set_setting("watermark_pos_y", value)
+            lambda value: self.user_settings.update_setting_in_memory("watermark_pos_y", value)
         )
         
         # 音量设置
         self.spin_voice_volume.valueChanged.connect(
-            lambda value: self.user_settings.set_setting("voice_volume", value)
+            lambda value: self.user_settings.update_setting_in_memory("voice_volume", value)
         )
         
         self.spin_bgm_volume.valueChanged.connect(
-            lambda value: self.user_settings.set_setting("bgm_volume", value)
+            lambda value: self.user_settings.update_setting_in_memory("bgm_volume", value)
         )
         
         # 生成数量
         self.spin_generate_count.valueChanged.connect(
-            lambda value: self.user_settings.set_setting("generate_count", value)
+            lambda value: self.user_settings.update_setting_in_memory("generate_count", value)
         )
         
         # 编码模式
         self.combo_encode_mode.currentTextChanged.connect(
-            lambda text: self.user_settings.set_setting("encode_mode", text)
+            lambda text: self.user_settings.update_setting_in_memory("encode_mode", text)
         )
     
     @pyqtSlot()
     def on_add_material(self):
         """添加素材"""
-        # 弹出文件夹选择对话框
-        folder = QFileDialog.getExistingDirectory(
-            self, "选择素材文件夹", "", QFileDialog.ShowDirsOnly
-        )
+        # 使用安全的初始目录
+        safe_dir = os.path.expanduser("~")  # 用户主目录
         
+        # 创建对话框实例而非使用静态方法
+        dialog = QFileDialog(self, "选择素材文件夹", safe_dir)
+        dialog.setFileMode(QFileDialog.DirectoryOnly)
+        dialog.setOption(QFileDialog.DontUseNativeDialog, True)  # 避免使用系统原生对话框
+        
+        if not dialog.exec_():
+            return
+        
+        folder = dialog.selectedFiles()[0]
         if folder:
             # 这里添加素材分析和处理逻辑
             folder_name = os.path.basename(folder)
@@ -964,10 +987,10 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             status_item.set_status("就绪")
             self.video_table.setItem(row_count, 5, status_item)
             
-            # 保存设置
-            self._save_user_settings()
+            # 移除自动保存设置代码
+            # self._save_user_settings()
             
-            QMessageBox.information(self, "添加素材", f"已添加素材文件夹: {folder_name}")
+            QMessageBox.information(self, "添加素材", f"已添加素材文件夹: {folder_name}\n您可以点击\"保存当前所有设置\"按钮保存这些设置")
     
     @pyqtSlot()
     def on_batch_import(self):
@@ -975,18 +998,25 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 获取上次导入的文件夹路径作为默认路径
         last_import_folder = self.user_settings.get_setting("import_folder", "")
         
-        # 选择根目录，如果有上次的路径则使用它作为初始目录
-        root_dir = QFileDialog.getExistingDirectory(
-            self, 
-            "选择素材根目录", 
-            last_import_folder
-        )
+        # 使用安全的初始目录
+        safe_dir = os.path.expanduser("~")  # 用户主目录
+        if last_import_folder and os.path.isdir(last_import_folder):
+            safe_dir = last_import_folder
         
+        # 创建对话框实例而非使用静态方法
+        dialog = QFileDialog(self, "选择素材根目录", safe_dir)
+        dialog.setFileMode(QFileDialog.DirectoryOnly)
+        dialog.setOption(QFileDialog.DontUseNativeDialog, True)  # 避免使用系统原生对话框
+        
+        if not dialog.exec_():
+            return
+        
+        root_dir = dialog.selectedFiles()[0]
         if not root_dir:
             return
         
-        # 保存导入的文件夹路径到用户设置
-        self.user_settings.set_setting("import_folder", root_dir)
+        # 保存导入的文件夹路径到用户设置（这个是单个设置，风险较小，保留）
+        self.user_settings.update_setting_in_memory("import_folder", root_dir)
         
         # 清空当前列表
         self.video_table.setRowCount(0)
@@ -998,8 +1028,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         # 使用_import_material_folder方法导入文件夹
         self._import_material_folder(root_dir)
         
-        # 导入完成后保存设置，确保记住素材列表
-        self._save_user_settings()
+        # 移除自动保存设置代码
+        # self._save_user_settings()
         
         # 显示导入结果
         imported_rows = self.video_table.rowCount()
@@ -1007,7 +1037,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             QMessageBox.information(
                 self, 
                 "批量导入完成", 
-                f"成功导入 {imported_rows} 个素材文件夹"
+                f"成功导入 {imported_rows} 个素材文件夹\n您可以点击\"保存当前所有设置\"按钮保存这些设置"
             )
         else:
             QMessageBox.warning(
@@ -1037,8 +1067,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             # 刷新导入
             self._import_material_folder(last_import_folder)
             
-            # 保存设置
-            self._save_user_settings()
+            # 移除自动保存设置代码
+            # self._save_user_settings()
             
             # 刷新素材数量
             self._update_media_counts()
@@ -1048,7 +1078,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             QMessageBox.information(
                 self, 
                 "刷新素材", 
-                f"素材列表已刷新，当前有 {imported_rows} 个素材文件夹\n已更新所有素材的视频和配音数量"
+                f"素材列表已刷新，当前有 {imported_rows} 个素材文件夹\n已更新所有素材的视频和配音数量\n您可以点击\"保存当前所有设置\"按钮保存这些设置"
             )
             
             self.status_label.setText("素材和数量刷新完成")
@@ -1067,9 +1097,10 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 self.parent_folder_title.setText("未选择文件夹")
                 # 清空抽取模式字典
                 self.folder_extract_modes.clear()
-                # 保存设置变更
-                self._save_user_settings()
+                # 移除自动保存设置代码
+                # self._save_user_settings()
                 logger.info("素材列表已清空")
+                QMessageBox.information(self, "清空素材", "素材列表已清空，您可以点击\"保存当前所有设置\"按钮保存这些设置")
     
     @pyqtSlot()
     def on_update_media_counts(self):
@@ -1091,23 +1122,28 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
     @pyqtSlot()
     def on_browse_save_dir(self):
         """浏览并选择保存目录"""
-        # 获取当前保存目录作为初始目录
-        current_dir = self.edit_save_dir.text()
-        
-        # 如果当前没有设置目录，则使用上次保存的目录
-        if not current_dir:
-            current_dir = self.user_settings.get_setting("save_dir", "")
-        
-        save_dir = QFileDialog.getExistingDirectory(
-            self, 
-            "选择保存目录", 
-            current_dir
-        )
-        
-        if save_dir:
-            self.edit_save_dir.setText(save_dir)
-            # 保存保存目录到用户设置
-            self.user_settings.set_setting("save_dir", save_dir)
+        try:
+            # 始终使用安全的初始目录
+            safe_dir = os.path.expanduser("~")  # 用户主目录
+            
+            # 尝试获取当前设置的目录
+            current_dir = self.edit_save_dir.text()
+            if current_dir and os.path.isdir(current_dir):
+                safe_dir = current_dir
+            
+            # 创建对话框实例而非使用静态方法
+            dialog = QFileDialog(self, "选择保存目录", safe_dir)
+            dialog.setFileMode(QFileDialog.DirectoryOnly)
+            dialog.setOption(QFileDialog.DontUseNativeDialog, True)  # 避免使用系统原生对话框
+            
+            if dialog.exec_():
+                save_dir = dialog.selectedFiles()[0]
+                if save_dir:
+                    self.edit_save_dir.setText(save_dir)
+                    QMessageBox.information(self, "设置保存目录", "保存目录已设置，请点击\"保存当前所有设置\"按钮保存所有设置")
+        except Exception as e:
+            logger.error(f"浏览保存目录时出错: {str(e)}")
+            QMessageBox.critical(self, "浏览目录错误", f"选择保存目录时发生错误：{str(e)}")
     
     @pyqtSlot()
     def on_open_save_dir(self):
@@ -1130,27 +1166,31 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         """浏览并选择背景音乐"""
         # 获取当前BGM路径的目录作为初始目录
         current_bgm = self.edit_bgm_path.text()
-        initial_dir = ""
+        safe_dir = os.path.expanduser("~")  # 默认使用用户主目录
         
         if current_bgm and os.path.exists(current_bgm):
-            initial_dir = os.path.dirname(current_bgm)
+            safe_dir = os.path.dirname(current_bgm)
         else:
             # 如果当前没有设置或路径不存在，则使用上次保存的BGM目录
             last_bgm = self.user_settings.get_setting("bgm_path", "")
             if last_bgm and os.path.exists(last_bgm):
-                initial_dir = os.path.dirname(last_bgm)
+                safe_dir = os.path.dirname(last_bgm)
         
-        bgm_file, _ = QFileDialog.getOpenFileName(
-            self, 
-            "选择背景音乐", 
-            initial_dir, 
-            "音频文件 (*.mp3 *.wav *.ogg *.flac *.m4a);;所有文件 (*.*)"
-        )
+        # 创建文件对话框
+        dialog = QFileDialog(self, "选择背景音乐", safe_dir)
+        dialog.setFileMode(QFileDialog.ExistingFile)
+        dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        dialog.setNameFilter("音频文件 (*.mp3 *.wav *.ogg *.flac *.m4a);;所有文件 (*.*)")
         
-        if bgm_file:
+        if not dialog.exec_():
+            return
+        
+        selected_files = dialog.selectedFiles()
+        if selected_files:
+            bgm_file = selected_files[0]
             self.edit_bgm_path.setText(bgm_file)
             # 保存BGM路径到用户设置
-            self.user_settings.set_setting("bgm_path", bgm_file)
+            self.user_settings.update_setting_in_memory("bgm_path", bgm_file)
     
     @pyqtSlot()
     def on_play_bgm(self):
@@ -1177,6 +1217,21 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             QMessageBox.information(self, "播放音乐", f"正在播放: {os.path.basename(bgm_path)}")
         except Exception as e:
             QMessageBox.warning(self, "播放错误", f"无法播放音乐: {str(e)}")
+
+    @pyqtSlot()
+    def on_save_settings(self):
+        """手动保存所有用户设置"""
+        try:
+            logger.info("手动保存用户设置...")
+            result = self._save_user_settings()
+            if result:
+                QMessageBox.information(self, "保存设置", "所有设置已成功保存")
+            else:
+                QMessageBox.warning(self, "保存设置", "设置保存过程中可能出现了问题，请查看日志")
+        except Exception as e:
+            error_msg = f"保存设置时出错: {str(e)}"
+            logger.error(error_msg)
+            QMessageBox.critical(self, "保存设置失败", error_msg)
     
     def _update_progress(self, message, percent):
         """
@@ -3216,12 +3271,20 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
     def on_browse_cache_dir(self):
         """选择缓存目录"""
         current_dir = self.edit_cache_dir.text()
-        if not current_dir or not os.path.exists(current_dir):
-            current_dir = os.path.expanduser("~")
+        safe_dir = os.path.expanduser("~")  # 用户主目录
         
-        cache_dir = QFileDialog.getExistingDirectory(
-            self, "选择缓存目录", current_dir
-        )
+        if current_dir and os.path.exists(current_dir):
+            safe_dir = current_dir
+        
+        # 创建对话框实例而非使用静态方法
+        dialog = QFileDialog(self, "选择缓存目录", safe_dir)
+        dialog.setFileMode(QFileDialog.DirectoryOnly)
+        dialog.setOption(QFileDialog.DontUseNativeDialog, True)  # 避免使用系统原生对话框
+        
+        if not dialog.exec_():
+            return
+        
+        cache_dir = dialog.selectedFiles()[0]
         
         if cache_dir:
             success = self.cache_config.set_cache_dir(cache_dir)
@@ -3823,96 +3886,144 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
     
     def _save_user_settings(self):
         """保存当前界面设置到用户配置"""
-        logger.info("正在保存用户设置...")
-        
-        # 获取主窗口位置和大小
-        window_size = [self.width(), self.height()]
-        window_pos = [self.pos().x(), self.pos().y()]
-        
-        # 获取当前活动的标签页
-        active_tab = self.tabs.currentIndex()
-        
-        # 获取素材列表数据
-        material_folders = []
-        for row in range(self.video_table.rowCount()):
-            try:
-                folder_path = self.video_table.item(row, 2).text()
-                folder_name = self.video_table.item(row, 1).text()
+        try:
+            logger.info("正在保存用户设置...")
+            
+            # 获取主窗口位置和大小
+            window_size = [self.width(), self.height()]
+            window_pos = [self.pos().x(), self.pos().y()]
+            
+            # 获取当前活动的标签页
+            active_tab = self.tabs.currentIndex()
+            
+            # 获取素材列表数据
+            material_folders = []
+            for row in range(self.video_table.rowCount()):
+                try:
+                    folder_path = self.video_table.item(row, 2).text()
+                    folder_name = self.video_table.item(row, 1).text()
+                    
+                    # 如果有状态列，获取抽取模式
+                    extract_mode = "single_video"  # 默认值
+                    status_item = self.video_table.item(row, 5)
+                    if status_item and isinstance(status_item, ExtractModeItem):
+                        extract_mode = status_item.extract_mode
+                    
+                    # 只添加有效路径
+                    if folder_path and os.path.exists(folder_path):
+                        material_folders.append({
+                            "name": folder_name,
+                            "path": folder_path,
+                            "extract_mode": extract_mode
+                        })
+                except Exception as e:
+                    logger.error(f"保存素材列表数据时出错: {e}")
+            
+            # 准备设置字典
+            settings = {
+                # 界面状态
+                "main_window_size": window_size,
+                "main_window_pos": window_pos,
+                "last_active_tab": active_tab,
                 
-                # 如果有状态列，获取抽取模式
-                extract_mode = "single_video"  # 默认值
-                status_item = self.video_table.item(row, 5)
-                if status_item and isinstance(status_item, ExtractModeItem):
-                    extract_mode = status_item.extract_mode
+                # 素材设置
+                "last_material_folders": material_folders,
+                "folder_extract_modes": self.folder_extract_modes,
                 
-                # 只添加有效路径
-                if folder_path and os.path.exists(folder_path):
-                    material_folders.append({
-                        "name": folder_name,
-                        "path": folder_path,
-                        "extract_mode": extract_mode
-                    })
-            except Exception as e:
-                logger.error(f"保存素材列表数据时出错: {e}")
-        
-        # 准备设置字典
-        settings = {
-            # 界面状态
-            "main_window_size": window_size,
-            "main_window_pos": window_pos,
-            "last_active_tab": active_tab,
+                # 导入设置
+                "import_folder": self.user_settings.get_setting("import_folder", ""),
+                
+                # 输出目录
+                "save_dir": self.edit_save_dir.text(),
+                
+                # 视频参数
+                "resolution": self.combo_resolution.currentText(),
+                "bitrate": self.spin_bitrate.value(),
+                "original_bitrate": self.chk_original_bitrate.isChecked(),
+                "transition": self.combo_transition.currentText(),
+                "gpu": self.combo_gpu.currentText(),
+                "encode_mode": self.combo_encode_mode.currentText(),
+                
+                # 音频设置
+                "voice_volume": self.spin_voice_volume.value(),
+                "bgm_volume": self.spin_bgm_volume.value(),
+                "bgm_path": self.edit_bgm_path.text(),
+                "audio_mode": self.combo_audio_mode.currentText() if hasattr(self, "combo_audio_mode") else "自动识别",
+                
+                # 水印设置
+                "watermark_enabled": self.chk_enable_watermark.isChecked(),
+                "watermark_prefix": self.edit_watermark_prefix.text(),
+                "watermark_size": self.spin_watermark_size.value(),
+                "watermark_color": self.watermark_color,
+                "watermark_position": self.combo_watermark_position.currentText(),
+                "watermark_pos_x": self.spin_pos_x.value(),
+                "watermark_pos_y": self.spin_pos_y.value(),
+                
+                # 批量处理
+                "generate_count": self.spin_generate_count.value(),
+                
+                # 缓存目录
+                "cache_dir": self.cache_config.get_cache_dir()
+            }
             
-            # 素材设置
-            "last_material_folders": material_folders,
-            "folder_extract_modes": self.folder_extract_modes,
-            
-            # 导入设置
-            "import_folder": self.user_settings.get_setting("import_folder", ""),
-            
-            # 输出目录
-            "save_dir": self.edit_save_dir.text(),
-            
-            # 视频参数
-            "resolution": self.combo_resolution.currentText(),
-            "bitrate": self.spin_bitrate.value(),
-            "original_bitrate": self.chk_original_bitrate.isChecked(),
-            "transition": self.combo_transition.currentText(),
-            "gpu": self.combo_gpu.currentText(),
-            "encode_mode": self.combo_encode_mode.currentText(),
-            
-            # 音频设置
-            "voice_volume": self.spin_voice_volume.value(),
-            "bgm_volume": self.spin_bgm_volume.value(),
-            "bgm_path": self.edit_bgm_path.text(),
-            "audio_mode": self.combo_audio_mode.currentText() if hasattr(self, "combo_audio_mode") else "自动识别",
-            
-            # 水印设置
-            "watermark_enabled": self.chk_enable_watermark.isChecked(),
-            "watermark_prefix": self.edit_watermark_prefix.text(),
-            "watermark_size": self.spin_watermark_size.value(),
-            "watermark_color": self.watermark_color,
-            "watermark_position": self.combo_watermark_position.currentText(),
-            "watermark_pos_x": self.spin_pos_x.value(),
-            "watermark_pos_y": self.spin_pos_y.value(),
-            
-            # 批量处理
-            "generate_count": self.spin_generate_count.value(),
-            
-            # 缓存目录
-            "cache_dir": self.cache_config.get_cache_dir()
-        }
-        
-        # 批量保存设置
-        self.user_settings.set_multiple_settings(settings)
-        logger.info("用户设置保存完成")
+            # 批量保存设置
+            success = self.user_settings.set_multiple_settings(settings)
+            if success:
+                logger.info("用户设置保存完成")
+            else:
+                logger.error("用户设置保存失败")
+            return success
+        except Exception as e:
+            logger.error(f"保存用户设置时发生异常: {str(e)}")
+            return False
 
     def closeEvent(self, event):
-        """窗口关闭事件，保存用户设置"""
-        # 保存当前设置
-        self._save_user_settings()
-        # 继续默认的关闭行为
-        super().closeEvent(event)
-
+        """窗口关闭事件，询问是否保存用户设置"""
+        try:
+            reply = QMessageBox.question(
+                self, 
+                "保存设置", 
+                "是否在退出前保存当前设置？",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            )
+            
+            if reply == QMessageBox.Yes:
+                # 保存当前设置
+                if not self._save_user_settings():
+                    # 如果保存失败，询问是否继续退出
+                    error_reply = QMessageBox.question(
+                        self, 
+                        "保存失败", 
+                        "保存设置失败，是否仍要退出？",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    if error_reply == QMessageBox.No:
+                        event.ignore()
+                        return
+                # 继续默认的关闭行为
+                super().closeEvent(event)
+            elif reply == QMessageBox.No:
+                # 不保存，继续关闭
+                super().closeEvent(event)
+            else:
+                # 取消关闭
+                event.ignore()
+        except Exception as e:
+            logger.error(f"窗口关闭处理出错: {str(e)}")
+            # 发生异常，询问是否仍要关闭
+            error_reply = QMessageBox.question(
+                self, 
+                "错误", 
+                f"处理关闭事件时出错: {str(e)}\n是否仍要退出？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if error_reply == QMessageBox.Yes:
+                super().closeEvent(event)
+            else:
+                event.ignore()
+    
     # 添加水印位置预览相关的方法
     def on_watermark_position_changed(self, position):
         """处理水印预设位置变化"""
@@ -3925,7 +4036,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             logger.error(f"更新水印位置时出错: {str(e)}")
         
         # 保存设置
-        self.user_settings.set_setting("watermark_position", position)
+        self.user_settings.update_setting_in_memory("watermark_position", position)
     
     def on_watermark_size_changed(self, size):
         """处理水印字体大小变化"""
@@ -3938,7 +4049,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             logger.error(f"更新水印大小时出错: {str(e)}")
         
         # 保存设置
-        self.user_settings.set_setting("watermark_size", size)
+        self.user_settings.update_setting_in_memory("watermark_size", size)
     
     def on_watermark_prefix_changed(self, prefix):
         """处理水印前缀文本变化"""
@@ -3958,7 +4069,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             logger.warning(f"更新水印X轴位置时出错: {e}")
         
         # 保存设置
-        self.user_settings.set_setting("watermark_pos_x", value)
+        self.user_settings.update_setting_in_memory("watermark_pos_x", value)
     
     def on_pos_y_changed(self, value):
         """处理Y轴微调值变化"""
@@ -3972,7 +4083,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             logger.warning(f"更新水印Y轴位置时出错: {e}")
         
         # 保存设置
-        self.user_settings.set_setting("watermark_pos_y", value)
+        self.user_settings.update_setting_in_memory("watermark_pos_y", value)
     
     def on_preview_position_changed(self, x, y):
         """处理预览控件中拖动位置变化"""
@@ -3985,8 +4096,8 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
         self.spin_pos_y.blockSignals(False)
         
         # 保存设置
-        self.user_settings.set_setting("watermark_pos_x", x)
-        self.user_settings.set_setting("watermark_pos_y", y)
+        self.user_settings.update_setting_in_memory("watermark_pos_x", x)
+        self.user_settings.update_setting_in_memory("watermark_pos_y", y)
     
     def on_reset_watermark_position(self):
         """重置水印位置"""
@@ -4023,9 +4134,9 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 self.spin_pos_y.blockSignals(False)
                 
                 # 保存设置
-                self.user_settings.set_setting("watermark_position", position)
-                self.user_settings.set_setting("watermark_pos_x", pos_x)
-                self.user_settings.set_setting("watermark_pos_y", pos_y)
+                self.user_settings.update_setting_in_memory("watermark_position", position)
+                self.user_settings.update_setting_in_memory("watermark_pos_x", pos_x)
+                self.user_settings.update_setting_in_memory("watermark_pos_y", pos_y)
                 
                 # 记录日志
                 logger.info(f"已更新水印位置: {position}, 偏移: ({pos_x}, {pos_y})")
@@ -4135,8 +4246,10 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     status_item.set_status("待处理")
                     self.video_table.setItem(row, 5, status_item)
             
-            # 保存用户设置
-            self._save_user_settings()
+            # 移除自动保存设置代码
+            # self._save_user_settings()
+            
+            QMessageBox.information(self, "设置抽取模式", "已设置为单视频模式，您可以点击\"保存当前所有设置\"按钮保存这些设置")
             
         elif action == multi_action:
             self.folder_extract_modes[folder_path] = "multi_video"
@@ -4163,8 +4276,10 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                     status_item.set_status("待处理")
                     self.video_table.setItem(row, 5, status_item)
             
-            # 保存用户设置
-            self._save_user_settings()
+            # 移除自动保存设置代码
+            # self._save_user_settings()
+            
+            QMessageBox.information(self, "设置抽取模式", "已设置为多视频拼接模式，您可以点击\"保存当前所有设置\"按钮保存这些设置")
             
         elif action == open_folder_action:
             # 打开文件夹
@@ -4207,8 +4322,10 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                         status_item.set_status("待处理")
                         self.video_table.setItem(row, 5, status_item)
                 
-                # 保存用户设置
-                self._save_user_settings()
+                # 移除自动保存设置代码
+                # self._save_user_settings()
+                
+                QMessageBox.information(self, "重置抽取模式", "已重置为默认的单视频模式，您可以点击\"保存当前所有设置\"按钮保存这些设置")
         
         elif action == refresh_count_action:
             # 刷新单个素材的数量
@@ -4289,7 +4406,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
   <li>多视频拼接模式：显示为蓝色，并在名称后添加"[多视频拼接]"标记</li>
 </ul>
 
-<p>您可以随时更改抽取模式，每个文件夹可以单独设置不同的抽取模式。软件会自动保存您的设置。</p>
+<p>您可以随时更改抽取模式，每个文件夹可以单独设置不同的抽取模式。您可以点击"保存当前所有设置"按钮来保存您的设置。</p>
         """
         
         dialog = QDialog(self)
@@ -4357,7 +4474,7 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                         folder_item.setForeground(QColor("#000000"))  # 黑色
                 
                 # 保存设置，确保记住拼接模式设置
-                self._save_user_settings()
+                # self._save_user_settings()
                 
                 # 记录日志
                 folder_name = self.video_table.item(row, 1).text()
@@ -4366,6 +4483,9 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
                 # 显示提示信息
                 mode_display = "多视频拼接" if new_mode == "multi_video" else "单视频"
                 self.status_label.setText(f"已切换 '{folder_name}' 为{mode_display}模式")
+                
+                # 添加提示信息
+                QMessageBox.information(self, "切换抽取模式", f"已将 '{folder_name}' 切换为{mode_display}模式，您可以点击\"保存当前所有设置\"按钮保存这些设置")
             else:
                 # 如果不是ExtractModeItem，则尝试创建一个
                 folder_path = self.video_table.item(row, 2).text()
