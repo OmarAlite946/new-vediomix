@@ -1488,7 +1488,7 @@ class VideoProcessor:
                     
                     if scene_videos_list:
                         # 增加缓冲时间，避免定格问题
-                        buffer_time = 0.2  # 安全缓冲，避免刚好等于音频时长导致定帧
+                        buffer_time = 0.1  # 安全缓冲，避免刚好等于音频时长导致定帧
                         total_video_duration = 0.0
                         selected_videos = []
 
@@ -1750,7 +1750,7 @@ class VideoProcessor:
                                 # 计算前面视频的总时长
                                 previous_videos_duration = sum(v.get("duration", 0) for v in selected_videos[:-1])
                                 # 计算最后一个视频需要的时长
-                                buffer_time = 0.2  # 安全缓冲，避免刚好等于音频时长导致定帧
+                                buffer_time = 0.1  # 安全缓冲，避免刚好等于音频时长导致定帧
                                 needed_duration = scene_audio_duration + buffer_time - previous_videos_duration
                                 
                                 # 确保不超过视频实际时长
