@@ -1723,6 +1723,111 @@ class VideoProcessor:
                             
                             # 更新已使用视频记录
                             self.used_videos_by_folder[scene["key"]] = used_videos
+                            
+                            # 修复：使用concat方式处理多个视频
+                            logger.info(f"为场景{i+1}选择了{len(selected_videos)}个视频，总时长: {total_video_duration:.2f}秒，使用concat方式处理")
+                            
+                            # 创建concat文件
+                            concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
+                            scene_concat_files.append(concat_file_path)
+                            
+                            with open(concat_file_path, 'w', encoding='utf-8') as concat_file:
+                                # 写入除最后一个视频外的所有视频（不裁剪）
+                                for j, video in enumerate(selected_videos[:-1]):
+                                    video_file_path = video["path"]
+                                    if not isinstance(video_file_path, str):
+                                        video_file_path = str(video_file_path)
+                                    video_file_escaped = video_file_path.replace("'", "\\'")
+                                    concat_file.write(f"file '{video_file_escaped}'\n")
+                                
+                                # 处理最后一个视频 - 使用duration参数精确控制
+                                last_video = selected_videos[-1]
+                                last_video_path = last_video["path"]
+                                if not isinstance(last_video_path, str):
+                                    last_video_path = str(last_video_path)
+                                last_video_path_escaped = last_video_path.replace("'", "\\'")
+                                
+                                # 计算前面视频的总时长
+                                previous_videos_duration = sum(v.get("duration", 0) for v in selected_videos[:-1])
+                                # 计算最后一个视频需要的时长
+                                buffer_time = 0.2  # 安全缓冲，避免刚好等于音频时长导致定帧
+                                needed_duration = scene_audio_duration + buffer_time - previous_videos_duration
+                                
+                                # 确保不超过视频实际时长
+                                last_video_duration = last_video.get("duration", 0)
+                                if needed_duration > last_video_duration:
+                                    needed_duration = last_video_duration
+                                
+                                # 使用duration参数而非裁剪视频
+                                concat_file.write(f"file '{last_video_path_escaped}'\n")
+                                concat_file.write(f"duration {needed_duration}\n")
+                                
+                                logger.info(f"最后一个视频将使用 {needed_duration:.2f} 秒 (原时长: {last_video_duration:.2f}秒)")
+                            
+                            # 执行拼接，生成场景视频
+                            concat_cmd = [
+                                self._get_ffmpeg_cmd(),
+                                "-y",
+                                "-f", "concat",
+                                "-safe", "0",
+                                "-i", concat_file_path,
+                                "-c", "copy"  # 直接复制，不重新编码
+                            ]
+                            
+                            # 如果有音频，替换音频
+                            if scene_audio_file:
+                                # 先拼接视频到临时文件
+                                temp_video = os.path.join(temp_dir, f"temp_scene_{i+1}.mp4")
+                                concat_cmd.append(temp_video)
+                                
+                                try:
+                                    logger.info(f"拼接视频: {' '.join(concat_cmd)}")
+                                    subprocess.run(concat_cmd, check=True)
+                                    
+                                    # 替换音频
+                                    audio_cmd = [
+                                        self._get_ffmpeg_cmd(),
+                                        "-y",
+                                        "-i", temp_video,  # 视频输入
+                                        "-i", scene_audio_file,  # 音频输入
+                                        "-map", "0:v:0",  # 使用第一个输入的视频
+                                        "-map", "1:a:0",  # 使用第二个输入的音频
+                                        "-c:v", "copy",  # 不重新编码视频
+                                        "-c:a", "aac",  # 音频转AAC格式（兼容性好）
+                                        "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                        "-r", "30",  # 强制使用30fps的输出帧率
+                                        "-fflags", "+genpts",  # 生成准确的时间戳
+                                        "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                        "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                        "-async", "1",  # 音频同步处理
+                                        "-shortest",  # 确保输出长度与最短输入匹配
+                                        scene_output
+                                    ]
+                                    
+                                    logger.info(f"替换音频: {' '.join(audio_cmd)}")
+                                    subprocess.run(audio_cmd, check=True)
+                                    
+                                    # 添加到场景视频列表
+                                    scene_videos.append(scene_output)
+                                    logger.info(f"场景 {i+1} 处理完成")
+                                except Exception as e:
+                                    logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                            else:
+                                # 没有音频，直接输出到场景视频文件
+                                concat_cmd.append(scene_output)
+                                
+                                try:
+                                    logger.info(f"拼接视频: {' '.join(concat_cmd)}")
+                                    subprocess.run(concat_cmd, check=True)
+                                    
+                                    # 添加到场景视频列表
+                                    scene_videos.append(scene_output)
+                                    logger.info(f"场景 {i+1} 处理完成")
+                                except Exception as e:
+                                    logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                                
+                            # 跳过下面的单视频处理逻辑
+                            continue
                         
                         logger.info(f"为场景{i+1} 选择视频: {os.path.basename(video_file)}, 时长: {video_duration:.2f}秒")
                         
@@ -1749,7 +1854,7 @@ class VideoProcessor:
                                     "-avoid_negative_ts", "make_zero",  # 避免负时间戳
                                     "-max_muxing_queue_size", "1024",  # 增加复用队列大小
                                     "-async", "1",  # 音频同步处理
-                                    "-t", str(scene_audio_duration + 0.1),  # 添加0.1秒缓冲
+                                    "-shortest",  # 替换-t参数，确保输出长度与最短输入匹配
                                     scene_output
                                 ]
                             else:
