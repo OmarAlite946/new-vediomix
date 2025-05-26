@@ -1,0 +1,89 @@
+if use_multi_video:
+    logger.info(f"场景 {i+1} 使用多视频混剪模式 配音时长 {scene_audio_duration:.2f}秒")
+    self.report_progress(f"多视频混剪: 选择视频素材", scene_progress_start + 10)
+
+    if scene_videos_list:
+        buffer_time = 0.2  # 安全缓冲，避免刚好等于音频时长导致定帧
+        total_video_duration = 0.0
+        selected_videos = []
+
+        # 初始化已使用视频记录
+        if scene["key"] not in self.used_videos_by_folder:
+            self.used_videos_by_folder[scene["key"]] = set()
+        used_videos = self.used_videos_by_folder[scene["key"]]
+
+        # 随机打乱视频列表
+        all_videos = list(scene_videos_list)
+        random.shuffle(all_videos)
+
+        available_videos = all_videos.copy()
+
+        while total_video_duration < scene_audio_duration + buffer_time:
+            if not available_videos:
+                # 如果没视频用了，重置
+                used_videos.clear()
+                available_videos = all_videos.copy()
+                random.shuffle(available_videos)
+
+            # 从未用过的视频中选一个
+            unused_videos = [v for v in available_videos if v["path"] not in used_videos]
+            if not unused_videos:
+                unused_videos = available_videos.copy()
+
+            video = random.choice(unused_videos)
+            video_path = video["path"]
+            video_duration = video.get("duration", 0)
+
+            if video_duration <= 0:
+                logger.warning(f"跳过无效视频：{video_path}")
+                available_videos.remove(video)
+                continue
+
+            selected_videos.append(video)
+            total_video_duration += video_duration
+            used_videos.add(video_path)
+            available_videos.remove(video)
+
+        logger.info(f"选中 {len(selected_videos)} 段视频，总时长 {total_video_duration:.2f}s，目标音频 {scene_audio_duration:.2f}s")
+
+        # ✅ 拼接视频片段（这里建议使用 moviepy 先做拼接后裁剪最后一个）
+        from moviepy.editor import VideoFileClip, concatenate_videoclips
+
+        clips = []
+        acc_duration = 0.0
+        for idx, video in enumerate(selected_videos):
+            clip = VideoFileClip(video["path"])
+            clip_duration = clip.duration
+
+            # 如果是最后一个，并且加上后超过目标，则裁剪
+            remaining = scene_audio_duration + 0.1 - acc_duration
+            if idx == len(selected_videos) - 1 and clip_duration > remaining:
+                clip = clip.subclip(0, remaining)
+                acc_duration += remaining
+            else:
+                acc_duration += clip_duration
+
+            clips.append(clip)
+
+        final_scene_clip = concatenate_videoclips(clips, method="compose")
+        if scene_audio_file:
+            from moviepy.editor import AudioFileClip
+            audio_clip = AudioFileClip(scene_audio_file).volumex(self.settings.get("voice_volume", 1.0))
+            final_scene_clip = final_scene_clip.set_audio(audio_clip)
+
+        final_scene_clip.write_videofile(
+            scene_output,
+            codec="libx264",
+            audio_codec="aac",
+            threads=self.settings.get("threads", 4),
+            bitrate=f"{self.settings.get('bitrate', 5000)}k",
+            verbose=False,
+            logger=None
+        )
+        final_scene_clip.close()
+        for c in clips:
+            c.close()
+
+        scene_videos.append(scene_output)
+        self.report_progress(f"完成场景 {i+1}/{len(scenes)} 视频生成", scene_progress_end)
+

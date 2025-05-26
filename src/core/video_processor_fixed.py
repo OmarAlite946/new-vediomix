@@ -1484,57 +1484,56 @@ class VideoProcessor:
                     # 多视频模式 - 随机选择多个视频直到总时长超过配音时长
                     logger.info(f"场景 {i+1} 使用多视频混剪模式 配音时长 {scene_audio_duration:.2f}秒")
                     
-                    self.report_progress(f"多视频混剪: 选择视频素材", scene_progress_start + 10)
+                    self.report_progress(f"多视频混剪: 随机选择多个视频片段", scene_progress_start + 10)
                     
                     if scene_videos_list:
-                        # 增加缓冲时间，避免定格问题
-                        buffer_time = 0.2  # 安全缓冲，避免刚好等于音频时长导致定帧
-                        total_video_duration = 0.0
-                        selected_videos = []
-
-                        # 初始化已使用视频记录
+                        # 重置随机种子以确保随机性
+                        random.seed(time.time() + random.random())
+                        
+                        # 初始化文件夹视频使用记录
                         if scene["key"] not in self.used_videos_by_folder:
                             self.used_videos_by_folder[scene["key"]] = set()
+                        
+                        # 获取该文件夹已使用的视频
                         used_videos = self.used_videos_by_folder[scene["key"]]
-
-                        # 随机打乱视频列表并选择视频，直到总时长足够
+                        
+                        # 将视频列表随机打乱
                         all_videos = list(scene_videos_list)
                         random.shuffle(all_videos)
+                        
+                        # 创建可供选择的视频列表
                         available_videos = all_videos.copy()
-
-                        # 确保选择的视频总时长超过配音时长+缓冲
-                        while total_video_duration < scene_audio_duration + buffer_time and available_videos:
-                            # 如果可用视频用完了，重置
-                            if not available_videos:
-                                used_videos.clear()
-                                available_videos = all_videos.copy()
-                                random.shuffle(available_videos)
-                                
-                            # 选择未使用过的视频
-                            unused_videos = [v for v in available_videos if v["path"] not in used_videos]
+                        
+                        # 选择视频直到总时长超过音频时长
+                        selected_videos = []
+                        total_video_duration = 0
+                        
+                        while total_video_duration < scene_audio_duration and available_videos:
+                            # 找出未使用的视频
+                            unused_videos = [v for v in available_videos if v.get("path") not in used_videos]
+                            
+                            # 如果没有未使用的视频，重置使用记录
                             if not unused_videos:
                                 logger.info(f"场景 {i+1} 所有视频已用过一轮，重新开始")
                                 used_videos.clear()
                                 unused_videos = available_videos
-                                
-                            # 随机选择一个视频
+                            
+                            # 随机选择一个未使用的视频
                             selected_video = random.choice(unused_videos)
                             video_duration = selected_video.get("duration", 0)
                             
-                            # 跳过无效视频
-                            if video_duration <= 0:
-                                logger.warning(f"跳过无效视频: {selected_video.get('path')}")
-                                available_videos.remove(selected_video)
-                                continue
-                                
-                            # 添加到已选择列表
+                            # 添加到已选择列表和已使用记录
                             selected_videos.append(selected_video)
+                            used_videos.add(selected_video.get("path"))
+                            
+                            # 从可用列表中移除已选择的视频
+                            available_videos = [v for v in available_videos if v.get("path") != selected_video.get("path")]
+                            
+                            # 累加时长
                             total_video_duration += video_duration
-                            used_videos.add(selected_video["path"])
-                            available_videos.remove(selected_video)
                             
                             logger.info(f"为场景{i+1}选择视频: {os.path.basename(selected_video.get('path'))}, "
-                                       f"累计时长: {total_video_duration:.2f}/{scene_audio_duration + buffer_time:.2f}秒")
+                                       f"累计时长: {total_video_duration:.2f}/{scene_audio_duration:.2f}秒")
                         
                         # 更新已使用视频记录
                         self.used_videos_by_folder[scene["key"]] = used_videos
@@ -1546,7 +1545,7 @@ class VideoProcessor:
                         
                         logger.info(f"为场景{i+1} 选择{len(selected_videos)} 个视频，总时长{total_video_duration:.2f}秒")
                         
-                        # 创建concat文件 - 使用高级concat格式指定duration参数
+                        # 创建concat文件
                         concat_file_path = os.path.join(concat_dir, f"scene_{i+1}_concat.txt")
                         scene_concat_files.append(concat_file_path)
                         
@@ -1559,29 +1558,55 @@ class VideoProcessor:
                                 video_file_escaped = video_file.replace("'", "\\'")
                                 concat_file.write(f"file '{video_file_escaped}'\n")
                             
-                            # 处理最后一个视频 - 使用duration参数精确控制
+                            # 处理最后一个视频 - 如果需要裁剪
                             if selected_videos:
                                 last_video = selected_videos[-1]
                                 last_video_path = last_video["path"]
                                 if not isinstance(last_video_path, str):
                                     last_video_path = str(last_video_path)
-                                last_video_path_escaped = last_video_path.replace("'", "\\'")
                                 
-                                # 计算前面视频的总时长
+                                # 计算最后一个视频应该的时长
                                 previous_videos_duration = sum(v.get("duration", 0) for v in selected_videos[:-1])
-                                # 计算最后一个视频需要的时长
-                                needed_duration = scene_audio_duration + buffer_time - previous_videos_duration
+                                last_video_needed_duration = scene_audio_duration - previous_videos_duration
                                 
-                                # 确保不超过视频实际时长
+                                # 如果需要裁剪最后一个视频（只有当需要裁剪的时长小于视频原始时长）
                                 last_video_duration = last_video.get("duration", 0)
-                                if needed_duration > last_video_duration:
-                                    needed_duration = last_video_duration
                                 
-                                # 使用duration参数而非裁剪视频
-                                concat_file.write(f"file '{last_video_path_escaped}'\n")
-                                concat_file.write(f"duration {needed_duration}\n")
-                                
-                                logger.info(f"最后一个视频将使用 {needed_duration:.2f} 秒 (原时长: {last_video_duration:.2f}秒)")
+                                if 0 < last_video_needed_duration < last_video_duration:
+                                    # 裁剪最后一个视频
+                                    trimmed_last_video = os.path.join(temp_dir, f"trimmed_last_video_{i+1}.mp4")
+                                    
+                                    # 使用FFmpeg裁剪（不改变速度，只裁剪时长）
+                                    trim_cmd = [
+                                        self._get_ffmpeg_cmd(),
+                                        "-y",
+                                        "-i", last_video_path,
+                                        "-t", str(last_video_needed_duration + 0.1),  # 添加0.1秒缓冲
+                                        "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                        "-r", "30",  # 强制使用30fps的输出帧率
+                                        "-fflags", "+genpts",  # 生成准确的时间戳
+                                        "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                        "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                        "-c:v", "copy",  # 不重新编码视频
+                                        "-c:a", "copy",  # 不重新编码音频
+                                        trimmed_last_video
+                                    ]
+                                    
+                                    try:
+                                        logger.info(f"裁剪最后一个视频到 {last_video_needed_duration:.2f}秒 {' '.join(trim_cmd)}")
+                                        subprocess.run(trim_cmd, check=True)
+                                        
+                                        # 在concat文件中使用裁剪后的视频
+                                        trimmed_path_escaped = trimmed_last_video.replace("'", "\\'")
+                                        concat_file.write(f"file '{trimmed_path_escaped}'\n")
+                                    except Exception as e:
+                                        logger.warning(f"裁剪最后一个视频失败: {str(e)}，使用原始视频")
+                                        video_file_escaped = last_video_path.replace("'", "\\'")
+                                        concat_file.write(f"file '{video_file_escaped}'\n")
+                                else:
+                                    # 不需要裁剪，直接使用原始视频
+                                    video_file_escaped = last_video_path.replace("'", "\\'")
+                                    concat_file.write(f"file '{video_file_escaped}'\n")
                         
                         # 执行拼接，生成场景视频
                         concat_cmd = [
@@ -1619,7 +1644,7 @@ class VideoProcessor:
                                     "-avoid_negative_ts", "make_zero",  # 避免负时间戳
                                     "-max_muxing_queue_size", "1024",  # 增加复用队列大小
                                     "-async", "1",  # 音频同步处理
-                                    "-shortest",  # 确保输出长度与最短输入匹配
+                                    "-t", str(scene_audio_duration + 0.1),  # 添加0.1秒缓冲
                                     scene_output
                                 ]
                                 

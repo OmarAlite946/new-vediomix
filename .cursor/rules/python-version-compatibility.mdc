@@ -1,0 +1,18 @@
+---
+description: Python版本兼容性规则  这个规则定义了代码应该兼容的Python版本范围，以及在不同版本之间可能存在的语法差异处理方法。
+globs: *.py src/**/*.py
+---
+
+# Your rule content
+
+- You can @ files here
+- You can use markdown but dont have to
+# 版本兼容性
+代码应兼容Python 3.8及以上版本
+避免使用已弃用的功能和语法
+在导入时使用try/except处理潜在的版本差异
+
+# 语言特性使用
+仅使用目标Python版本支持的语言特性
+使用typing模块进行类型注解
+对于Python 3.6+，推荐使用f-strings进行字符串格式化
