@@ -1652,6 +1652,7 @@ class VideoProcessor:
                             "-f", "concat",
                             "-safe", "0",
                             "-i", concat_file_path,
+                            "-reset_timestamps", "1",  # 重置时间戳，解决时长累加问题
                             "-c", "copy"  # 直接复制，不重新编码
                         ]
                         concat_cmd.append(temp_scene_video)
@@ -1843,7 +1844,15 @@ class VideoProcessor:
                                 "-f", "concat",
                                 "-safe", "0",
                                 "-i", concat_file_path,
-                                "-c", "copy"  # 直接复制，不重新编码
+                                "-reset_timestamps", "1",  # 重置时间戳，解决时长累加问题
+                                "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
+                                "-r", "30",  # 强制使用30fps的输出帧率
+                                "-fflags", "+genpts",  # 生成准确的时间戳
+                                "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                                "-max_muxing_queue_size", "1024",  # 增加复用队列大小
+                                "-async", "1",  # 音频同步处理
+                                "-c:v", "copy",  # 不重新编码视频
+                                "-c:a", "aac"  # 音频强制编码为AAC以提高兼容性
                             ]
                             
                             # 如果有音频，替换音频
@@ -1988,6 +1997,7 @@ class VideoProcessor:
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_file,
+                "-reset_timestamps", "1",  # 重置时间戳，解决时长累加问题
                 "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
                 "-r", "30",  # 强制使用30fps的输出帧率
                 "-fflags", "+genpts",  # 生成准确的时间戳
@@ -2324,6 +2334,7 @@ class VideoProcessor:
             # 使用copy编解码器直接拼接，避免重新编码
             concat_cmd = cmd + [
                 "-c", "copy",  # 保持原有音频和视频
+                "-reset_timestamps", "1",  # 重置时间戳，解决时长累加问题
                 "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
                 "-r", "30",  # 强制使用30fps的输出帧率
                 "-fflags", "+genpts",  # 添加生成正确时间戳的参数
@@ -2371,6 +2382,7 @@ class VideoProcessor:
                 "-f", "concat",
                 "-safe", "0",
                 "-i", temp_list_file,
+                "-reset_timestamps", "1",  # 重置时间戳，解决时长累加问题
                 "-fps_mode", "cfr",  # 使用恒定帧率模式代替旧的vsync
                 "-r", "30",  # 强制使用30fps的输出帧率
                 "-fflags", "+genpts",  # 添加生成正确时间戳的参数
