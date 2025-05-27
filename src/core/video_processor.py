@@ -1142,6 +1142,88 @@ class VideoProcessor:
         
         logger.warning(f"无法获取视频时长: {video_path}")
         return 0.0
+        
+    def _get_video_duration(self, video_path):
+        """
+        获取视频时长，优先使用Windows系统API直接读取文件属性中的时长信息，
+        这与Windows资源管理器显示的时长一致。如果失败则回退到其他方法。
+        
+        Args:
+            video_path: 视频文件路径
+            
+        Returns:
+            float: 视频时长（秒）
+        """
+        # 确保路径是字符串类型
+        if not isinstance(video_path, str):
+            video_path = str(video_path)
+            
+        # 在Windows系统上使用Shell32.dll直接读取文件属性
+        if sys.platform == 'win32':
+            try:
+                import win32com.client
+                import os
+                
+                # 规范化路径为绝对路径
+                abs_path = os.path.abspath(video_path)
+                folder = os.path.dirname(abs_path)
+                filename = os.path.basename(abs_path)
+                
+                # 创建Shell对象
+                shell = win32com.client.Dispatch("Shell.Application")
+                ns = shell.NameSpace(folder)
+                
+                # 获取文件对象
+                file_item = ns.ParseName(filename)
+                if not file_item:
+                    logger.debug(f"无法获取文件对象: {video_path}")
+                    return self._get_video_duration_fast(video_path)
+                    
+                # 查找时长属性
+                duration_index = None
+                for i in range(0, 300):  # 遍历可能的属性索引
+                    prop_name = ns.GetDetailsOf(None, i)
+                    if prop_name and ("时长" in prop_name or "Duration" in prop_name or "Length" in prop_name):
+                        duration_index = i
+                        break
+                        
+                if duration_index is not None:
+                    # 获取时长值
+                    duration_str = ns.GetDetailsOf(file_item, duration_index)
+                    if duration_str:
+                        # 解析时长字符串，格式可能是"00:00:05"或类似格式
+                        try:
+                            # 移除可能的非ASCII字符
+                            duration_str = ''.join(c for c in duration_str if ord(c) < 128)
+                            duration_str = duration_str.strip()
+                            
+                            # 处理不同格式的时长字符串
+                            if ":" in duration_str:
+                                # HH:MM:SS 或 MM:SS 格式
+                                parts = duration_str.split(':')
+                                if len(parts) == 3:  # HH:MM:SS
+                                    hours = int(parts[0])
+                                    minutes = int(parts[1])
+                                    seconds = float(parts[2].replace(',', '.'))
+                                    duration = hours * 3600 + minutes * 60 + seconds
+                                elif len(parts) == 2:  # MM:SS
+                                    minutes = int(parts[0])
+                                    seconds = float(parts[1].replace(',', '.'))
+                                    duration = minutes * 60 + seconds
+                                else:
+                                    raise ValueError(f"无法解析时长格式: {duration_str}")
+                                    
+                                logger.debug(f"从Windows文件属性读取视频时长: {video_path}, 时长: {duration:.2f}秒")
+                                return duration
+                        except (ValueError, IndexError) as e:
+                            logger.debug(f"解析Windows文件属性时长失败: {duration_str}, 错误: {str(e)}")
+                
+                logger.debug(f"在Windows文件属性中未找到有效的视频时长: {video_path}")
+            except Exception as e:
+                logger.debug(f"使用Windows API获取视频时长失败: {str(e)}")
+        
+        # 如果Windows API方法失败，回退到现有的快速方法
+        return self._get_video_duration_fast(video_path)
 
     def _process_folder_shortcuts(self, parent_folder, folder_type, max_depth=3):
         """
@@ -1487,11 +1569,12 @@ class VideoProcessor:
                     self.report_progress(f"多视频混剪: 选择视频素材", scene_progress_start + 10)
                     
                     if scene_videos_list:
-                        # 增加缓冲时间，避免定格问题
-                        buffer_time = 0.1  # 安全缓冲，避免刚好等于音频时长导致定帧
-                        total_video_duration = 0.0
-                        selected_videos = []
-
+                        # 改进的多视频拼接处理逻辑：
+                        # 1. 将所有选中的视频直接拼接到一个临时视频文件中（不使用duration参数）
+                        # 2. 然后对整个临时视频进行精确裁剪，确保最终视频时长等于配音时长+缓冲
+                        # 3. 最后添加配音，生成最终场景视频
+                        # 这种方法避免了使用duration参数可能导致的问题，确保视频时长精确匹配需求
+                        
                         # 初始化已使用视频记录
                         if scene["key"] not in self.used_videos_by_folder:
                             self.used_videos_by_folder[scene["key"]] = set()
@@ -1551,39 +1634,18 @@ class VideoProcessor:
                         scene_concat_files.append(concat_file_path)
                         
                         with open(concat_file_path, 'w', encoding='utf-8') as concat_file:
-                            # 写入除最后一个视频外的所有视频（不裁剪）
-                            for j, video in enumerate(selected_videos[:-1]):
+                            # 写入所有选中的视频（不对单个视频进行裁剪）
+                            for video in selected_videos:
                                 video_file = video["path"]
                                 if not isinstance(video_file, str):
                                     video_file = str(video_file)
                                 video_file_escaped = video_file.replace("'", "\\'")
                                 concat_file.write(f"file '{video_file_escaped}'\n")
                             
-                            # 处理最后一个视频 - 使用duration参数精确控制
-                            if selected_videos:
-                                last_video = selected_videos[-1]
-                                last_video_path = last_video["path"]
-                                if not isinstance(last_video_path, str):
-                                    last_video_path = str(last_video_path)
-                                last_video_path_escaped = last_video_path.replace("'", "\\'")
-                                
-                                # 计算前面视频的总时长
-                                previous_videos_duration = sum(v.get("duration", 0) for v in selected_videos[:-1])
-                                # 计算最后一个视频需要的时长
-                                needed_duration = scene_audio_duration + buffer_time - previous_videos_duration
-                                
-                                # 确保不超过视频实际时长
-                                last_video_duration = last_video.get("duration", 0)
-                                if needed_duration > last_video_duration:
-                                    needed_duration = last_video_duration
-                                
-                                # 使用duration参数而非裁剪视频
-                                concat_file.write(f"file '{last_video_path_escaped}'\n")
-                                concat_file.write(f"duration {needed_duration}\n")
-                                
-                                logger.info(f"最后一个视频将使用 {needed_duration:.2f} 秒 (原时长: {last_video_duration:.2f}秒)")
+                            logger.info(f"将拼接 {len(selected_videos)} 个视频到临时视频，总时长约 {total_video_duration:.2f} 秒")
                         
-                        # 执行拼接，生成场景视频
+                        # 执行拼接，生成临时场景视频（不裁剪）
+                        temp_scene_video = os.path.join(temp_dir, f"temp_scene_{i+1}_concat.mp4")
                         concat_cmd = [
                             self._get_ffmpeg_cmd(),
                             "-y",
@@ -1592,22 +1654,44 @@ class VideoProcessor:
                             "-i", concat_file_path,
                             "-c", "copy"  # 直接复制，不重新编码
                         ]
-                        
-                        # 如果有音频，替换音频
-                        if scene_audio_file:
-                            # 先拼接视频到临时文件
-                            temp_video = os.path.join(temp_dir, f"temp_scene_{i+1}.mp4")
-                            concat_cmd.append(temp_video)
+                        concat_cmd.append(temp_scene_video)
+
+                        try:
+                            logger.info(f"拼接视频到临时文件: {' '.join(concat_cmd)}")
+                            subprocess.run(concat_cmd, check=True)
                             
-                            try:
-                                logger.info(f"拼接视频: {' '.join(concat_cmd)}")
-                                subprocess.run(concat_cmd, check=True)
+                            # 执行精确裁剪，控制视频时长
+                            # 从临时拼接视频中裁剪出所需时长的视频
+                            trim_cmd = [
+                                self._get_ffmpeg_cmd(),
+                                "-y",
+                                "-i", temp_scene_video,
+                                "-ss", "0",  # 从开始裁剪
+                                "-t", str(scene_audio_duration + buffer_time),  # 精确控制输出时长
+                                "-c:v", "copy",  # 不重新编码视频
+                                "-avoid_negative_ts", "make_zero"
+                            ]
+                            
+                            # 如果有音频，这里先不加入，后面再处理
+                            if not scene_audio_file:
+                                trim_cmd.extend(["-c:a", "copy"])  # 如果没有替换音频，保留原音频
+                                trim_cmd.append(scene_output)
+                                
+                                logger.info(f"裁剪视频到指定时长: {' '.join(trim_cmd)}")
+                                subprocess.run(trim_cmd, check=True)
+                            else:
+                                # 裁剪到临时文件
+                                trimmed_video = os.path.join(temp_dir, f"trimmed_scene_{i+1}.mp4")
+                                trim_cmd.append(trimmed_video)
+                                
+                                logger.info(f"裁剪视频到临时文件: {' '.join(trim_cmd)}")
+                                subprocess.run(trim_cmd, check=True)
                                 
                                 # 替换音频
                                 audio_cmd = [
                                     self._get_ffmpeg_cmd(),
                                     "-y",
-                                    "-i", temp_video,  # 视频输入
+                                    "-i", trimmed_video,  # 视频输入
                                     "-i", scene_audio_file,  # 音频输入
                                     "-map", "0:v:0",  # 使用第一个输入的视频
                                     "-map", "1:a:0",  # 使用第二个输入的音频
@@ -1622,28 +1706,16 @@ class VideoProcessor:
                                     "-shortest",  # 确保输出长度与最短输入匹配
                                     scene_output
                                 ]
-                                
-                                logger.info(f"替换音频: {' '.join(audio_cmd)}")
+                                logger.info(f"添加音频到视频: {' '.join(audio_cmd)}")
                                 subprocess.run(audio_cmd, check=True)
-                                
-                                # 添加到场景视频列表
-                                scene_videos.append(scene_output)
-                                logger.info(f"场景 {i+1} 处理完成")
-                            except Exception as e:
-                                logger.error(f"处理场景 {i+1} 失败: {str(e)}")
-                        else:
-                            # 没有音频，直接输出到场景视频文件
-                            concat_cmd.append(scene_output)
                             
-                            try:
-                                logger.info(f"拼接视频: {' '.join(concat_cmd)}")
-                                subprocess.run(concat_cmd, check=True)
-                                
-                                # 添加到场景视频列表
-                                scene_videos.append(scene_output)
-                                logger.info(f"场景 {i+1} 处理完成")
-                            except Exception as e:
-                                logger.error(f"处理场景 {i+1} 失败: {str(e)}")
+                            # 添加到场景视频列表
+                            scene_videos.append(scene_output)
+                            
+                        except Exception as e:
+                            logger.error(f"处理场景 {i+1} 视频失败: {str(e)}")
+                            self.report_progress(f"错误: 处理场景 {i+1} 视频失败: {str(e)}", scene_progress_end - 5)
+                            continue
                     else:
                         logger.warning(f"场景 {i+1} 没有视频文件，跳过")
                 else:
@@ -2238,8 +2310,10 @@ class VideoProcessor:
         except Exception as e:
             logger.warning(f"计算音频总时长出错: {str(e)}")
         
-        # 添加输出时长限制参数
-        cmd.extend(["-t", str(max_duration + 0.2)])  # 增加0.2秒余量避免视频定格
+        # 添加输出时长限制参数，确保不超过预期长度
+        target_duration = max_duration + 0.2  # 增加0.2秒余量
+        logger.info(f"设置最终视频时长限制为 {target_duration:.2f} 秒")
+        cmd.extend(["-t", str(target_duration)])
         
         # 判断是否需要添加背景音乐
         if bgm_path and os.path.exists(bgm_path):

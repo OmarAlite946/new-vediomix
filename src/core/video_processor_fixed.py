@@ -1074,7 +1074,7 @@ class VideoProcessor:
 
     def _get_video_duration_fast(self, video_path):
         """
-        快速获取视频时长，优先使用FFprobe，然后是OpenCV
+        快速获取视频时长，优先使用FFprobe，其次MoviePy，最后是OpenCV
         
         Args:
             video_path: 视频文件路径
@@ -1082,13 +1082,23 @@ class VideoProcessor:
         Returns:
             float: 视频时长（秒）
         """
-        duration = 0.0
+        # 确保视频路径是字符串
+        if not isinstance(video_path, str):
+            video_path = str(video_path)
+            
+        # 视频路径规范化
+        video_path = os.path.normpath(video_path)
         
+        # 检查文件是否存在
+        if not os.path.exists(video_path):
+            logger.warning(f"视频文件不存在: {video_path}")
+            return 0.0
+            
         # 尝试使用FFprobe获取时长（最快）
         try:
             import subprocess
-            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
-                   "-of", "default=noprint_wrappers=1:nokey=1", video_path]
+            ffprobe_cmd = self._get_ffmpeg_cmd().replace("ffmpeg", "ffprobe")
+            cmd = [ffprobe_cmd, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
             if result.returncode == 0 and result.stdout.strip():
                 duration = float(result.stdout.strip())
@@ -1096,22 +1106,8 @@ class VideoProcessor:
                 return duration
         except Exception as e:
             logger.debug(f"使用FFprobe获取视频时长失败: {str(e)}")
-        
-        # 尝试使用OpenCV获取时长
-        try:
-            cap = cv2.VideoCapture(video_path)
-            if cap.isOpened():
-                fps = cap.get(cv2.CAP_PROP_FPS)
-                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                if fps > 0 and frame_count > 0:
-                    duration = frame_count / fps
-                    logger.debug(f"使用OpenCV获取视频时长: {video_path}, 时长: {duration:.2f}秒")
-                cap.release()
-                return duration
-        except Exception as e:
-            logger.debug(f"使用OpenCV获取视频时长失败: {str(e)}")
-        
-        # 尝试使用moviepy获取时长（最慢但最可靠）
+            
+        # 尝试使用moviepy获取时长
         try:
             from moviepy.editor import VideoFileClip
             with VideoFileClip(video_path) as clip:
@@ -1120,28 +1116,127 @@ class VideoProcessor:
                 return duration
         except Exception as e:
             logger.debug(f"使用MoviePy获取视频时长失败: {str(e)}")
-        
-        # 最后尝试使用wmic获取时长（仅Windows）
+            
+        # 尝试使用OpenCV获取时长
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if fps > 0 and frame_count > 0:
+                    duration = frame_count / fps
+                    logger.debug(f"使用OpenCV获取视频时长: {video_path}, 时长: {duration:.2f}秒")
+                    cap.release()
+                    return duration
+                cap.release()
+        except Exception as e:
+            logger.debug(f"使用OpenCV获取视频时长失败: {str(e)}")
+            
+        # 在Windows上尝试使用WMIC获取时长
         if sys.platform == 'win32':
             try:
                 import subprocess
-                # 修复f-string中的反斜杠问题
-                path_escaped = video_path.replace("/", "\\\\")
-                cmd = 'wmic path CIM_DataFile where name="' + path_escaped + '" get Duration /value'
-                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True, timeout=5)
-                if result.returncode == 0 and result.stdout:
-                    duration_str = result.stdout.strip()
-                    if "Duration=" in duration_str:
-                        duration_val = duration_str.split("=")[1].strip()
-                        if duration_val and duration_val.isdigit():
-                            duration = int(duration_val) / 10000000  # 转换为秒
-                            logger.debug(f"使用WMIC获取视频时长: {video_path}, 时长: {duration:.2f}秒")
-                            return duration
+                import re
+                
+                # 使用WMIC查询文件信息
+                cmd = ['wmic', 'datafile', 'where', f'name="{video_path.replace("/", "\\\\")}"', 'get', 'Duration', '/value']
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    # 解析输出
+                    match = re.search(r'Duration=(\d+)', result.stdout)
+                    if match:
+                        # WMIC返回的是100纳秒单位，转换为秒
+                        duration = int(match.group(1)) / 10000000
+                        logger.debug(f"使用WMIC获取视频时长: {video_path}, 时长: {duration:.2f}秒")
+                        return duration
             except Exception as e:
                 logger.debug(f"使用WMIC获取视频时长失败: {str(e)}")
         
         logger.warning(f"无法获取视频时长: {video_path}")
         return 0.0
+        
+    def _get_video_duration(self, video_path):
+        """
+        获取视频时长，优先使用Windows系统API直接读取文件属性中的时长信息，
+        这与Windows资源管理器显示的时长一致。如果失败则回退到其他方法。
+        
+        Args:
+            video_path: 视频文件路径
+            
+        Returns:
+            float: 视频时长（秒）
+        """
+        # 确保路径是字符串类型
+        if not isinstance(video_path, str):
+            video_path = str(video_path)
+            
+        # 在Windows系统上使用Shell32.dll直接读取文件属性
+        if sys.platform == 'win32':
+            try:
+                import win32com.client
+                import os
+                
+                # 规范化路径为绝对路径
+                abs_path = os.path.abspath(video_path)
+                folder = os.path.dirname(abs_path)
+                filename = os.path.basename(abs_path)
+                
+                # 创建Shell对象
+                shell = win32com.client.Dispatch("Shell.Application")
+                ns = shell.NameSpace(folder)
+                
+                # 获取文件对象
+                file_item = ns.ParseName(filename)
+                if not file_item:
+                    logger.debug(f"无法获取文件对象: {video_path}")
+                    return self._get_video_duration_fast(video_path)
+                    
+                # 查找时长属性
+                duration_index = None
+                for i in range(0, 300):  # 遍历可能的属性索引
+                    prop_name = ns.GetDetailsOf(None, i)
+                    if prop_name and ("时长" in prop_name or "Duration" in prop_name or "Length" in prop_name):
+                        duration_index = i
+                        break
+                        
+                if duration_index is not None:
+                    # 获取时长值
+                    duration_str = ns.GetDetailsOf(file_item, duration_index)
+                    if duration_str:
+                        # 解析时长字符串，格式可能是"00:00:05"或类似格式
+                        try:
+                            # 移除可能的非ASCII字符
+                            duration_str = ''.join(c for c in duration_str if ord(c) < 128)
+                            duration_str = duration_str.strip()
+                            
+                            # 处理不同格式的时长字符串
+                            if ":" in duration_str:
+                                # HH:MM:SS 或 MM:SS 格式
+                                parts = duration_str.split(':')
+                                if len(parts) == 3:  # HH:MM:SS
+                                    hours = int(parts[0])
+                                    minutes = int(parts[1])
+                                    seconds = float(parts[2].replace(',', '.'))
+                                    duration = hours * 3600 + minutes * 60 + seconds
+                                elif len(parts) == 2:  # MM:SS
+                                    minutes = int(parts[0])
+                                    seconds = float(parts[1].replace(',', '.'))
+                                    duration = minutes * 60 + seconds
+                                else:
+                                    raise ValueError(f"无法解析时长格式: {duration_str}")
+                                    
+                                logger.debug(f"从Windows文件属性读取视频时长: {video_path}, 时长: {duration:.2f}秒")
+                                return duration
+                        except (ValueError, IndexError) as e:
+                            logger.debug(f"解析Windows文件属性时长失败: {duration_str}, 错误: {str(e)}")
+                
+                logger.debug(f"在Windows文件属性中未找到有效的视频时长: {video_path}")
+            except Exception as e:
+                logger.debug(f"使用Windows API获取视频时长失败: {str(e)}")
+        
+        # 如果Windows API方法失败，回退到现有的快速方法
+        return self._get_video_duration_fast(video_path)
 
     def _process_folder_shortcuts(self, parent_folder, folder_type, max_depth=3):
         """
