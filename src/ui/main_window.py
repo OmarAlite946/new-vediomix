@@ -3323,11 +3323,11 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
 
     @pyqtSlot()
     def on_clear_cache(self):
-        """清理缓存目录"""
+        """一键彻底清理缓存目录及所有子目录"""
         reply = QMessageBox.question(
             self, 
             "确认清理缓存", 
-            "是否清理缓存目录中的所有文件？\n\n这将删除所有临时文件，但不会影响项目文件。",
+            "是否彻底清理缓存目录中的所有文件和子目录？\n\n这将删除所有临时文件和缓存数据。",
             QMessageBox.Yes | QMessageBox.No, 
             QMessageBox.No
         )
@@ -3342,24 +3342,58 @@ FFmpeg是一个功能强大的视频处理工具，它是本软件处理视频�
             return
         
         try:
-            # 清理缓存文件但保留目录
-            count = 0
-            for file in os.listdir(cache_dir):
-                file_path = os.path.join(cache_dir, file)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                    count += 1
+            # 记录开始时间
+            start_time = time.time()
+            
+            # 删除所有文件和子目录，但保留缓存根目录
+            file_count = 0
+            dir_count = 0
+            
+            # 遍历所有子目录和文件
+            for root, dirs, files in os.walk(cache_dir, topdown=False):
+                # 删除所有文件
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        os.remove(file_path)
+                        file_count += 1
+                    except Exception as e:
+                        pass  # 忽略错误，继续删除其他文件
+                
+                # 删除所有子目录（除了缓存根目录）
+                if root != cache_dir:
+                    for dir_name in dirs:
+                        dir_path = os.path.join(root, dir_name)
+                        try:
+                            os.rmdir(dir_path)
+                            dir_count += 1
+                        except Exception as e:
+                            pass  # 忽略错误，继续删除其他目录
+            
+            # 删除缓存根目录下的所有子目录
+            for item in os.listdir(cache_dir):
+                item_path = os.path.join(cache_dir, item)
+                if os.path.isdir(item_path):
+                    try:
+                        import shutil
+                        shutil.rmtree(item_path)
+                        dir_count += 1
+                    except Exception as e:
+                        pass  # 忽略错误，继续删除其他目录
+            
+            # 计算耗时
+            elapsed_time = time.time() - start_time
             
             QMessageBox.information(
                 self, 
                 "清理完成", 
-                f"已清理 {count} 个缓存文件。"
+                f"已彻底清理缓存：\n- 删除了 {file_count} 个文件\n- 删除了 {dir_count} 个目录\n- 用时 {elapsed_time:.2f} 秒"
             )
         except Exception as e:
             QMessageBox.warning(
                 self, 
                 "清理失败", 
-                f"清理缓存文件时出错：{str(e)}"
+                f"清理缓存时出错：{str(e)}"
             )
 
     @QtCore.pyqtSlot(bool)
